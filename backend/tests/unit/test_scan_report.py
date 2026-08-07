@@ -93,7 +93,14 @@ def test_write_inventory_json_nests_metadata_when_present(tmp_path: Path) -> Non
         )
         assert with_metadata.id is not None
         MediaMetadataRepository(session).create(
-            MediaMetadata(media_file_id=with_metadata.id, make="Apple")
+            MediaMetadata(
+                media_file_id=with_metadata.id,
+                make="Apple",
+                gps_latitude=35.6762,
+                gps_longitude=139.6503,
+                gps_position_raw="35.6762 139.6503",
+                location_information="+35.6762+139.6503/",
+            )
         )
 
         without_metadata = MediaFileRepository(session).create(
@@ -116,3 +123,10 @@ def test_write_inventory_json_nests_metadata_when_present(tmp_path: Path) -> Non
     by_name = {entry["file_name"]: entry for entry in data}
     assert by_name["a.jpg"]["metadata"]["make"] == "Apple"
     assert by_name["b.jpg"]["metadata"] is None
+
+    # README §14.4/§28 — coordinates never appear in the default JSON export.
+    exported_metadata_keys = set(by_name["a.jpg"]["metadata"])
+    assert "gps_latitude" not in exported_metadata_keys
+    assert "gps_longitude" not in exported_metadata_keys
+    assert "gps_position_raw" not in exported_metadata_keys
+    assert "location_information" not in exported_metadata_keys

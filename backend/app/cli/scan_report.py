@@ -73,6 +73,10 @@ def _media_file_to_dict(row: MediaFile) -> dict[str, Any]:
 
 
 def _media_metadata_to_dict(media_metadata: MediaMetadata) -> dict[str, Any]:
+    # Coordinates (`gps_latitude`/`gps_longitude`/`gps_position_raw`/
+    # `location_information`) are intentionally excluded — README §14.4
+    # "não mostrar latitude e longitude no relatório por padrão" and §28
+    # "não registrar coordenadas em logs comuns" (roadmap Phase 11).
     return {
         "capture_datetime": media_metadata.capture_datetime,
         "make": media_metadata.make,
@@ -80,10 +84,6 @@ def _media_metadata_to_dict(media_metadata: MediaMetadata) -> dict[str, Any]:
         "software": media_metadata.software,
         "lens_model": media_metadata.lens_model,
         "camera_serial_number": media_metadata.camera_serial_number,
-        "gps_latitude": media_metadata.gps_latitude,
-        "gps_longitude": media_metadata.gps_longitude,
-        "gps_position_raw": media_metadata.gps_position_raw,
-        "location_information": media_metadata.location_information,
         "handler_description": media_metadata.handler_description,
         "compressor_name": media_metadata.compressor_name,
         "encoder": media_metadata.encoder,
