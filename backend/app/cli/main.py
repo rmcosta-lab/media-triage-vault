@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import typer
+import uvicorn
 
 from backend.app.cli.scan_report import write_error_log, write_inventory_json
 from backend.app.core.db import create_db_and_tables, get_database_path, get_engine, get_session
@@ -394,6 +395,19 @@ def _report_execute_progress(operation: MoveOperation) -> None:
         f"  {operation.source_path} -> {operation.planned_destination_path}: "
         f"{operation.status}{detail}"
     )
+
+
+@app.command("serve")
+def serve_command(
+    port: int = typer.Option(8000, "--port", help="Local port to listen on."),
+) -> None:
+    """Start the local, read-only FastAPI layer (README §20.1 Passo B).
+
+    Always binds 127.0.0.1 — there is no --host option, by design
+    (specs/mission.md #1: the backend never listens beyond localhost).
+    """
+    typer.echo(f"Serving on http://127.0.0.1:{port} (Ctrl+C to stop)")
+    uvicorn.run("backend.app.api.app:app", host="127.0.0.1", port=port)
 
 
 if __name__ == "__main__":

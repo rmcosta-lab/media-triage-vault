@@ -57,8 +57,14 @@ Explicitly **not** in scope before the MVP closes: macOS CI runners, macOS fixtu
 ## API layer (Phase B)
 
 - **FastAPI**, bound to `127.0.0.1` only
+- **Uvicorn** — the local ASGI server FastAPI runs on; `media-organizer
+  serve` hardcodes `host="127.0.0.1"` with no `--host` override
 - Progress via **Server-Sent Events**
-- Local API docs (no external assets)
+- Local API docs: FastAPI's default `/docs`/`/redoc` load their JS/CSS
+  from a CDN, which principle 1's "no CDN assets" forbids, so both are
+  disabled (`docs_url=None`, `redoc_url=None`); `/openapi.json` stays on
+  (generated in-process, no network) for tooling
+- **httpx** (dev only) — required by `fastapi.testclient.TestClient`
 
 ## Frontend (Phase C)
 
