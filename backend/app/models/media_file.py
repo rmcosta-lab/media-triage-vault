@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Optional
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
+    from backend.app.models.classification import Classification
     from backend.app.models.media_metadata import MediaMetadata
     from backend.app.models.scan import Scan
 
@@ -34,3 +35,4 @@ class MediaFile(SQLModel, table=True):
 
     scan: "Scan" = Relationship(back_populates="media_files")
     media_metadata: Optional["MediaMetadata"] = Relationship(back_populates="media_file")
+    classification: Optional["Classification"] = Relationship(back_populates="media_file")
