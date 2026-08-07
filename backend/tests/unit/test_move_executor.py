@@ -343,3 +343,35 @@ def test_blocked_operation_is_left_untouched(engine: Engine, tmp_path: Path) -> 
 
         session.refresh(operation)
         assert operation.status == "blocked"
+
+
+def test_should_cancel_stops_before_next_operation(engine: Engine, tmp_path: Path) -> None:
+    with get_session(engine) as session:
+        scan_id = _make_scan(session)
+        source_a = _make_source_file(tmp_path, "a.jpg")
+        source_b = _make_source_file(tmp_path, "b.jpg")
+        media_a = _make_media_file(session, scan_id, source_a)
+        media_b = _make_media_file(session, scan_id, source_b)
+        plan = _make_move_plan(session, scan_id)
+        operation_a = _make_operation(
+            session, plan, scan_id, media_a, source_a, tmp_path / "dest" / "a.jpg"
+        )
+        operation_b = _make_operation(
+            session, plan, scan_id, media_b, source_b, tmp_path / "dest" / "b.jpg"
+        )
+
+        calls = 0
+
+        def _should_cancel() -> bool:
+            nonlocal calls
+            calls += 1
+            return calls > 1
+
+        summary = execute_move_plan(session, plan.id, should_cancel=_should_cancel)  # type: ignore[arg-type]
+
+        assert summary.total_completed == 1
+        assert summary.total_failed == 0
+
+        session.refresh(operation_a)
+        session.refresh(operation_b)
+        assert {operation_a.status, operation_b.status} == {"completed", "planned"}
