@@ -1,12 +1,13 @@
 """``MovePlan`` and ``MoveOperation`` tables — README §24.5/§24.6 (= §18
-diário transacional), roadmap Phase 14.
+diário transacional), roadmap Phases 14-15.
 
-`MoveOperation` is the transactional journal in full: this phase only ever
-writes `status in MOVE_OPERATION_STATUSES` ("planned"/"blocked", both
-planning-time-only), while Phase 15's executor appends and drives the
-execution states (in_progress/copying/verifying/renaming/deleting_source/
-completed/failed/skipped/cancelled). The table is created now rather than
-duplicated later so the executor extends the same rows this phase plans.
+`MoveOperation` is the transactional journal in full. Phase 14 (planning)
+only ever writes `status in {"planned", "blocked"}`; Phase 15's executor
+(`services/move_executor.py`) drives a `"planned"` row through the
+execution states (`validating`/`copying`/`verifying`/`renaming`/
+`deleting_source`/`completed`/`failed`/`skipped`/`cancelled`). The table
+was created in Phase 14 so the executor extends the same rows the planner
+wrote rather than duplicating them.
 """
 
 from datetime import UTC, datetime
@@ -14,7 +15,19 @@ from datetime import UTC, datetime
 from sqlmodel import Field, Relationship, SQLModel
 
 MOVE_PLAN_STATUSES = ("draft", "generated")
-MOVE_OPERATION_STATUSES = ("planned", "blocked")
+MOVE_OPERATION_STATUSES = (
+    "planned",
+    "blocked",
+    "validating",
+    "copying",
+    "verifying",
+    "renaming",
+    "deleting_source",
+    "completed",
+    "failed",
+    "skipped",
+    "cancelled",
+)
 
 
 class MovePlan(SQLModel, table=True):
