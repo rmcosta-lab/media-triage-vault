@@ -12,6 +12,8 @@ move plan. None of these ever write to the scanned source tree — only to
 from __future__ import annotations
 
 import json
+import signal
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,16 +24,22 @@ from backend.app.cli.scan_report import write_error_log, write_inventory_json
 from backend.app.core.db import create_db_and_tables, get_database_path, get_engine, get_session
 from backend.app.repositories.classification_repository import ClassificationRepository
 from backend.app.repositories.media_file_repository import MediaFileRepository
+from backend.app.repositories.move_operation_repository import MoveOperationRepository
+from backend.app.repositories.move_plan_repository import MovePlanRepository
 from backend.app.rules.engine import ROUTING_GROUPS, ClassificationResult
 from backend.app.services.classification import classify_scan
 from backend.app.services.destinations import DestinationConfig, set_destination_rules
 from backend.app.services.media_type import detect_media_types_for_scan
 from backend.app.services.metadata import extract_metadata_for_scan
+from backend.app.services.move_executor import TERMINAL_STATUSES, execute_move_plan
 from backend.app.services.move_plan import generate_move_plan
+from backend.app.services.move_report import generate_move_report
 from backend.app.services.reports import generate_report
 from backend.app.services.scanner import ScanProgress, scan_folder
 
 if TYPE_CHECKING:
+    from types import FrameType
+
     from backend.app.models.media_file import MediaFile
     from backend.app.models.move_plan import MoveOperation
     from backend.app.services.thumbnails import ThumbnailResult
@@ -297,6 +305,95 @@ def plan_command(
 def _report_plan_progress(media: MediaFile, operation: MoveOperation) -> None:
     status = "planned" if operation.status == "planned" else f"blocked ({operation.error_code})"
     typer.echo(f"  {media.relative_path} -> {operation.planned_destination_path}: {status}")
+
+
+@app.command("execute")
+def execute_command(
+    scan_id: int = typer.Option(..., "--scan-id", help="ID of an existing scan."),
+    output: Path = typer.Option(..., "--output", help="Directory for the move report."),
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help="Execute the plan. Without this flag, only the confirmation summary is shown.",
+    ),
+    validation_mode: str | None = typer.Option(
+        None, "--validation-mode", help="Override the plan's validation_mode for this run."
+    ),
+    database: Path | None = typer.Option(
+        None, "--database", hidden=True, help="Override the SQLite database path (testing only)."
+    ),
+) -> None:
+    """Execute the latest move plan for SCAN_ID (README §16 Etapa 6-8, US-004)."""
+    database_path = database if database is not None else get_database_path()
+    engine = get_engine(database_path)
+    create_db_and_tables(engine)
+
+    with get_session(engine) as session:
+        move_plan = MovePlanRepository(session).get_latest_for_scan(scan_id)
+        if move_plan is None:
+            typer.echo(f"No move plan found for scan_id={scan_id}. Run `plan` first.")
+            raise typer.Exit(code=1)
+        assert move_plan.id is not None
+
+        operations = MoveOperationRepository(session).list_by_plan(move_plan.id)
+        planned = [op for op in operations if op.status == "planned"]
+        blocked = [op for op in operations if op.status == "blocked"]
+        already_terminal = [op for op in operations if op.status in TERMINAL_STATUSES]
+
+        typer.echo(f"Move plan #{move_plan.id} for scan_id={scan_id}:")
+        typer.echo(
+            f"  {len(planned)} file(s) to move "
+            f"({sum(op.source_size for op in planned)} bytes), "
+            f"{len(blocked)} blocked (will not run), "
+            f"{len(already_terminal)} already finished from a previous run."
+        )
+
+        if not confirm:
+            typer.echo("Nothing executed. Re-run with --confirm to execute.")
+            raise typer.Exit(code=0)
+
+        cancel_requested = False
+
+        def _request_cancel(signum: int, frame: FrameType | None) -> None:
+            nonlocal cancel_requested
+            cancel_requested = True
+            typer.echo("\nCancellation requested — finishing the current file, then stopping.")
+
+        previous_handler = signal.signal(signal.SIGINT, _request_cancel)
+        started = time.monotonic()
+        try:
+            execution_summary = execute_move_plan(
+                session,
+                move_plan.id,
+                validation_mode=validation_mode,
+                on_progress=_report_execute_progress,
+                should_cancel=lambda: cancel_requested,
+            )
+        finally:
+            signal.signal(signal.SIGINT, previous_handler)
+        elapsed_seconds = time.monotonic() - started
+
+        output.mkdir(parents=True, exist_ok=True)
+        report_summary = generate_move_report(
+            session, move_plan.id, output, execution_summary, elapsed_seconds
+        )
+
+    typer.echo(
+        "Done. "
+        f"completed={report_summary.total_completed} failed={report_summary.total_failed} "
+        f"skipped={report_summary.total_skipped} still_planned={report_summary.total_planned} "
+        f"bytes_moved={report_summary.total_bytes_moved} elapsed={elapsed_seconds:.1f}s"
+    )
+    typer.echo(f"Move report: {output / 'move_report.json'}")
+    typer.echo(f"Move report CSV: {output / 'move_report.csv'}")
+
+
+def _report_execute_progress(operation: MoveOperation) -> None:
+    detail = f" ({operation.error_code})" if operation.status == "failed" else ""
+    typer.echo(
+        f"  {operation.source_path} -> {operation.planned_destination_path}: "
+        f"{operation.status}{detail}"
+    )
 
 
 if __name__ == "__main__":
