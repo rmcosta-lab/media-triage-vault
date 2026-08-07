@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Media Organizer report — {{ scan.source_root }}</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #6b6b6b;
+    --border: #d9d9d9;
+    --accent: #2563eb;
+    --warn-bg: #fff4e5;
+    --error-bg: #fde8e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d;
+      --fg: #e8e8e8;
+      --muted: #9a9a9a;
+      --border: #3a3d44;
+      --accent: #6ea8fe;
+      --warn-bg: #3a3020;
+      --error-bg: #3a2020;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, Segoe UI, Arial, sans-serif;
+    margin: 0;
+    padding: 1.5rem;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+  .subtitle { color: var(--muted); margin: 0 0 1rem; font-size: 0.9rem; }
+  .totals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .totals-block { min-width: 180px; }
+  .totals-block h2 { font-size: 0.85rem; text-transform: uppercase; color: var(--muted); margin: 0 0 0.4rem; }
+  .totals-block ul { list-style: none; margin: 0; padding: 0; font-size: 0.9rem; }
+  .totals-block li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.1rem 0; }
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 1.25rem;
+  }
+  .filters label { font-size: 0.85rem; display: flex; align-items: center; gap: 0.35rem; }
+  select {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.25rem 0.4rem;
+  }
+  #visible-count { font-size: 0.85rem; color: var(--muted); margin-left: auto; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem;
+  }
+  .file-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem;
+    font-size: 0.82rem;
+  }
+  .file-card.hidden { display: none; }
+  .file-card.requires-review { background: var(--warn-bg); }
+  .file-card.has-error { background: var(--error-bg); }
+  .thumb {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 4px;
+    background: var(--border);
+    display: block;
+    margin-bottom: 0.4rem;
+  }
+  .thumb-placeholder {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 4px;
+    background: var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 0.75rem;
+    margin-bottom: 0.4rem;
+    text-align: center;
+    padding: 0.5rem;
+  }
+  .path { font-weight: 600; word-break: break-all; margin: 0 0 0.3rem; }
+  .meta { color: var(--muted); margin: 0 0 0.2rem; }
+  .reasons { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+  .badge {
+    display: inline-block;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 0.3rem;
+    font-size: 0.72rem;
+    margin-right: 0.3rem;
+  }
+</style>
+</head>
+<body>
+  <h1>Media Organizer — analysis report</h1>
+  <p class="subtitle">
+    Generated {{ generated_at.isoformat(timespec="seconds") }} ·
+    Source: {{ scan.source_root }} ·
+    {{ summary.total_files }} files ·
+    {{ "%.1f"|format(summary.total_bytes / 1048576) }} MB
+  </p>
+
+  <div class="totals">
+    <div class="totals-block">
+      <h2>By group</h2>
+      <ul>
+        {% for group, count in summary.totals_by_group.items() %}
+        <li><span>{{ group }}</span><span>{{ count }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div class="totals-block">
+      <h2>By country</h2>
+      <ul>
+        {% for country, count in summary.totals_by_country.items() %}
+        <li><span>{{ country }}</span><span>{{ count }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div class="totals-block">
+      <h2>Flags</h2>
+      <ul>
+        <li><span>Low confidence</span><span>{{ summary.low_confidence_count }}</span></li>
+        <li><span>Errors</span><span>{{ summary.error_count }}</span></li>
+        <li><span>Thumbnails generated</span><span>{{ summary.thumbnails_generated }}</span></li>
+        <li><span>Thumbnails failed</span><span>{{ summary.thumbnails_failed }}</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="filters">
+    <label>Group
+      <select id="filter-group">
+        <option value="">All</option>
+        {% for group in summary.totals_by_group.keys() %}
+        <option value="{{ group }}">{{ group }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Country
+      <select id="filter-country">
+        <option value="">All</option>
+        {% for country in summary.totals_by_country.keys() %}
+        <option value="{{ country }}">{{ country }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label><input type="checkbox" id="filter-review"> Low confidence only</label>
+    <label><input type="checkbox" id="filter-error"> Errors only</label>
+    <span id="visible-count"></span>
+  </div>
+
+  <div class="grid" id="file-grid">
+    {% for row in rows %}
+    <div class="file-card{% if row.requires_review %} requires-review{% endif %}{% if row.error_code %} has-error{% endif %}"
+         data-group="{{ row.routing_group }}"
+         data-country="{{ row.country_code or '' }}"
+         data-review="{{ 'true' if row.requires_review else 'false' }}"
+         data-error="{{ 'true' if row.error_code else 'false' }}">
+      {% if row.thumbnail_path %}
+      <img class="thumb" src="{{ row.thumbnail_path }}" alt="{{ row.relative_path }}" loading="lazy">
+      {% else %}
+      <div class="thumb-placeholder">no preview available</div>
+      {% endif %}
+      <p class="path">{{ row.relative_path }}</p>
+      <p class="meta">{{ row.media_kind or "unknown" }} · {{ row.image_format or "n/a" }} · {{ row.routing_group }}</p>
+      {% if row.make or row.model %}
+      <p class="meta">{{ row.make or "" }} {{ row.model or "" }}</p>
+      {% endif %}
+      {% if row.capture_datetime %}
+      <p class="meta">Captured {{ row.capture_datetime }}</p>
+      {% endif %}
+      {% if row.country_name %}
+      <p class="meta">Country: {{ row.country_name }}</p>
+      {% endif %}
+      {% if row.confidence is not none %}
+      <p class="meta">
+        <span class="badge">confidence={{ "%.2f"|format(row.confidence) }}</span>
+        {% if row.requires_review %}<span class="badge">requires review</span>{% endif %}
+        {% if row.manual_override %}<span class="badge">manual override</span>{% endif %}
+      </p>
+      {% endif %}
+      {% if row.reasons %}
+      <ul class="reasons">
+        {% for reason in row.reasons %}
+        <li>{{ reason }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if row.error_code %}
+      <p class="meta">Error: {{ row.error_code }} — {{ row.error_message or "" }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <script>
+    (function () {
+      var groupSelect = document.getElementById("filter-group");
+      var countrySelect = document.getElementById("filter-country");
+      var reviewCheckbox = document.getElementById("filter-review");
+      var errorCheckbox = document.getElementById("filter-error");
+      var countLabel = document.getElementById("visible-count");
+      var cards = Array.prototype.slice.call(document.querySelectorAll(".file-card"));
+
+      function applyFilters() {
+        var group = groupSelect.value;
+        var country = countrySelect.value;
+        var reviewOnly = reviewCheckbox.checked;
+        var errorOnly = errorCheckbox.checked;
+        var visible = 0;
+
+        cards.forEach(function (card) {
+          var matches = true;
+          if (group && card.dataset.group !== group) matches = false;
+          if (country && card.dataset.country !== country) matches = false;
+          if (reviewOnly && card.dataset.review !== "true") matches = false;
+          if (errorOnly && card.dataset.error !== "true") matches = false;
+          card.classList.toggle("hidden", !matches);
+          if (matches) visible += 1;
+        });
+
+        countLabel.textContent = visible + " / " + cards.length + " shown";
+      }
+
+      groupSelect.addEventListener("change", applyFilters);
+      countrySelect.addEventListener("change", applyFilters);
+      reviewCheckbox.addEventListener("change", applyFilters);
+      errorCheckbox.addEventListener("change", applyFilters);
+      applyFilters();
+    })();
+  </script>
+</body>
+</html>

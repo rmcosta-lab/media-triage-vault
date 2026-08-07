@@ -84,7 +84,11 @@ phase, run at least `uv run ruff check .`, `uv run mypy backend` and
   via `shutil.which` and still centralizes the lookup behind
   `resolve_tool()` — no call site invokes a bare command string directly.
   Invoke every tool with `subprocess` argument lists — never a shell
-  string, never `shell=True`.
+  string, never `shell=True`. A single-frame FFmpeg extraction (thumbnails,
+  Phase 13) needs an explicit `-update 1` — without it, newer FFmpeg's
+  `image2` muxer silently writes nothing for a plain filename target and
+  still exits `0`, so check `returncode` *and* that the destination file
+  actually exists.
 - **Paths**: store and compare NFC-normalized; pass the OS-native form to every
   filesystem call. Sanitize destination names to the portable intersection and
   check the 260-character Windows limit at plan time.
@@ -102,6 +106,11 @@ phase, run at least `uv run ruff check .`, `uv run mypy backend` and
   mapper-configuration time. Also never name a `Relationship()` attribute
   `metadata` — it collides with SQLAlchemy's reserved `Base.metadata`
   (Phase 6: `MediaFile.media_metadata` / `MediaMetadata.media_file`).
+  `rawpy` (Phase 13) only re-exports its enums/exceptions
+  (`ThumbFormat`, `LibRawError`, ...) under `TYPE_CHECKING` in its own
+  `__init__.py`, which trips mypy strict's no-implicit-reexport check —
+  import those specific names from `rawpy._rawpy` directly instead of
+  `rawpy`; `rawpy.imread` itself is unaffected.
 - **Tests**: every rule and every failure path gets a test. Move-related code is
 - **Tests**: every rule and every failure path gets a test. Move-related code is
   tested against temp directories, including interrupted and mismatched-hash
