@@ -181,10 +181,10 @@ def _summarize(
     )
 
 
-def _write_report_json(
-    path: Path, scan: Scan, rows: list[ReportRow], summary: ReportSummary, generated_at: datetime
-) -> None:
-    payload = {
+def _report_payload(
+    scan: Scan, rows: list[ReportRow], summary: ReportSummary, generated_at: datetime
+) -> dict[str, Any]:
+    return {
         "generated_at": generated_at,
         "source_root": scan.source_root,
         "total_files": summary.total_files,
@@ -193,10 +193,33 @@ def _write_report_json(
         "totals_by_country": summary.totals_by_country,
         "files": [dataclasses.asdict(row) for row in rows],
     }
+
+
+def _write_report_json(
+    path: Path, scan: Scan, rows: list[ReportRow], summary: ReportSummary, generated_at: datetime
+) -> None:
+    payload = _report_payload(scan, rows, summary, generated_at)
     path.write_text(
         json.dumps(payload, default=_json_default, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def build_report_payload(session: Session, scan_id: int) -> dict[str, Any]:
+    """Build the same `report.json` payload shape without writing files or thumbnails.
+
+    Used by the API's `GET /api/scans/{scan_id}/report` (roadmap Phase 19) — the
+    CLI `report` command (Phase 13) still owns actually generating thumbnails
+    and writing `report.html`/`.csv`/`errors.log` to disk.
+    """
+    scan = ScanRepository(session).get(scan_id)
+    if scan is None:
+        raise ValueError(f"No scan found for scan_id={scan_id}")
+
+    media_files = list(MediaFileRepository(session).list_by_scan(scan_id))
+    rows = _build_rows(session, media_files, {})
+    summary = _summarize(rows, {})
+    return _report_payload(scan, rows, summary, datetime.now(UTC))
 
 
 def _write_report_csv(path: Path, rows: list[ReportRow]) -> None:

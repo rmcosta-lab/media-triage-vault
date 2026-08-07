@@ -1,4 +1,4 @@
-"""Background job runner — README §26, roadmap Phase 18.
+"""Background job runner — README §26, roadmap Phases 18-19.
 
 A single daemon worker thread drains a local `queue.Queue`, running one
 job at a time (`limitar concorrência de leitura`) and persisting every
@@ -6,7 +6,7 @@ bit of state in the `Job` SQLite row rather than in memory — the row is
 the source of truth `GET /api/jobs/{job_id}` and the SSE stream both
 read from. No Celery/Redis (README §26). `should_cancel` is checked
 between files/batches only, via the underlying services' own hooks
-(Phase 4/6/12) — a job is never interrupted mid-file.
+(Phase 4/6/12/15) — a job is never interrupted mid-file.
 """
 
 from __future__ import annotations
@@ -21,11 +21,13 @@ from sqlalchemy import Engine
 from sqlmodel import Session
 
 from backend.app.models.job import Job
+from backend.app.models.move_plan import MoveOperation
 from backend.app.models.scan import Scan
 from backend.app.repositories.job_repository import JobRepository
 from backend.app.services.classification import classify_scan
 from backend.app.services.media_type import detect_media_types_for_scan
 from backend.app.services.metadata import extract_metadata_for_scan
+from backend.app.services.move_executor import execute_move_plan
 from backend.app.services.scanner import ScanProgress, scan_folder
 
 # Each queued item carries its own engine — the one bound to whichever
@@ -128,6 +130,31 @@ def _run_classify_job(engine: Engine, job_id: int, params: dict[str, object]) ->
     _update_job(engine, job_id, status=final_status, finished_at=datetime.now(UTC))
 
 
+def _run_execute_job(engine: Engine, job_id: int, params: dict[str, object]) -> None:
+    move_plan_id = int(str(params["move_plan_id"]))
+    _update_job(
+        engine, job_id, status="running", move_plan_id=move_plan_id, started_at=datetime.now(UTC)
+    )
+
+    processed_count = 0
+
+    def _on_progress(_operation: MoveOperation) -> None:
+        nonlocal processed_count
+        processed_count += 1
+        _update_job(engine, job_id, processed=processed_count)
+
+    with Session(engine) as session:
+        execute_move_plan(
+            session,
+            move_plan_id,
+            on_progress=_on_progress,
+            should_cancel=lambda: _should_cancel(engine, job_id),
+        )
+
+    final_status = "cancelled" if _should_cancel(engine, job_id) else "completed"
+    _update_job(engine, job_id, status=final_status, finished_at=datetime.now(UTC))
+
+
 def _worker_loop() -> None:
     while True:
         engine, job_id = _job_queue.get()
@@ -143,6 +170,8 @@ def _worker_loop() -> None:
                 _run_scan_job(engine, job_id, params)
             elif job_type == "classify":
                 _run_classify_job(engine, job_id, params)
+            elif job_type == "execute":
+                _run_execute_job(engine, job_id, params)
         except Exception as error:  # noqa: BLE001 - a job must never crash the worker thread
             _update_job(
                 engine,
@@ -193,6 +222,22 @@ def submit_classify_job(session: Session, scan_id: int) -> Job:
             scan_id=scan_id,
             status="queued",
             params_json=json.dumps({"scan_id": scan_id}),
+        )
+    )
+    assert job.id is not None
+    _ensure_worker_started()
+    _job_queue.put((_engine_of(session), job.id))
+    return job
+
+
+def submit_execute_job(session: Session, move_plan_id: int) -> Job:
+    """Queue an execute job for an approved move plan. `Job.id` is the "move run" id."""
+    job = JobRepository(session).create(
+        Job(
+            job_type="execute",
+            move_plan_id=move_plan_id,
+            status="queued",
+            params_json=json.dumps({"move_plan_id": move_plan_id}),
         )
     )
     assert job.id is not None

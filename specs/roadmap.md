@@ -41,7 +41,7 @@ Guiding rule: **the engine is read-only until Phase 14.** No code that moves, re
 
 - [x] **Phase 17 — FastAPI read layer.** App bound to `127.0.0.1`; scan/file/classification/metadata/thumbnail GET endpoints over existing data. *Done when endpoints serve a completed scan.*
 - [x] **Phase 18 — Jobs + progress.** Background job runner (thread/process + SQLite state, no Celery/Redis); POST scan/classify; SSE progress at `/api/jobs/{job_id}/events`; cancellation. *Done when a scan runs via API with live progress.*
-- [ ] **Phase 19 — Plan/execute API.** Destinations PUT, move-plan create/approve, execute, move-run status/cancel, report endpoints. *Done when the full US-001→US-004 flow works over HTTP.*
+- [x] **Phase 19 — Plan/execute API.** Destinations PUT, move-plan create/approve, execute, move-run status/cancel, report endpoints. *Done when the full US-001→US-004 flow works over HTTP.*
 
 ## Stage G — UI (README Fase 5)
 

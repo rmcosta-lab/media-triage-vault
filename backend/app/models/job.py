@@ -1,17 +1,19 @@
-"""``Job`` table — background job runner state, README §26, roadmap Phase 18.
+"""``Job`` table — background job runner state, README §26, roadmap Phases 18-19.
 
-Every scan/classify job triggered through the API is one row here.
-`cancel_requested` is the external "please stop" signal (set by `POST
-/api/scans/{scan_id}/cancel`); `status` only becomes `"cancelled"` once
-the worker thread has actually honored it between files/batches — never
-mid-file.
+Every scan/classify/execute job triggered through the API is one row
+here. `cancel_requested` is the external "please stop" signal (set by
+`POST /api/scans/{scan_id}/cancel` or `POST /api/move-runs/{run_id}/cancel`);
+`status` only becomes `"cancelled"` once the worker thread has actually
+honored it between files/batches — never mid-file. `move_plan_id` is set
+for `job_type="execute"` jobs (roadmap Phase 19) — such a job's `id` also
+serves as README §25's "move run" id (`GET /api/move-runs/{run_id}`).
 """
 
 from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
-JOB_TYPES = ("scan", "classify")
+JOB_TYPES = ("scan", "classify", "execute")
 JOB_STATUSES = ("queued", "running", "completed", "failed", "cancelled")
 
 
@@ -19,6 +21,7 @@ class Job(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     job_type: str
     scan_id: int | None = None
+    move_plan_id: int | None = None
     status: str = "queued"
     params_json: str = "{}"
     cancel_requested: bool = False

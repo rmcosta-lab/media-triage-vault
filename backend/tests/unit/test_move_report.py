@@ -20,7 +20,6 @@ from backend.app.repositories.media_file_repository import MediaFileRepository
 from backend.app.repositories.move_operation_repository import MoveOperationRepository
 from backend.app.repositories.move_plan_repository import MovePlanRepository
 from backend.app.repositories.scan_repository import ScanRepository
-from backend.app.services.move_executor import MoveExecutionSummary
 from backend.app.services.move_report import generate_move_report
 
 
@@ -71,6 +70,7 @@ def _make_operation(
     *,
     status: str,
     error_code: str | None = None,
+    destination_size: int | None = None,
 ) -> MoveOperation:
     assert media_file.id is not None
     assert plan.id is not None
@@ -82,6 +82,7 @@ def _make_operation(
             source_path=str(source),
             planned_destination_path=str(source.parent / "dest" / source.name),
             source_size=source.stat().st_size,
+            destination_size=destination_size,
             status=status,
             error_code=error_code,
             finished_at=datetime.now(UTC) if status in ("completed", "failed") else None,
@@ -107,7 +108,15 @@ def test_generate_move_report_writes_json_and_csv(engine: Engine, tmp_path: Path
         media_blocked = _make_media_file(session, scan_id, blocked_source)
         media_planned = _make_media_file(session, scan_id, planned_source)
 
-        _make_operation(session, plan, scan_id, media_ok, completed_source, status="completed")
+        _make_operation(
+            session,
+            plan,
+            scan_id,
+            media_ok,
+            completed_source,
+            status="completed",
+            destination_size=completed_source.stat().st_size,
+        )
         _make_operation(
             session,
             plan,
@@ -120,16 +129,8 @@ def test_generate_move_report_writes_json_and_csv(engine: Engine, tmp_path: Path
         _make_operation(session, plan, scan_id, media_blocked, blocked_source, status="blocked")
         _make_operation(session, plan, scan_id, media_planned, planned_source, status="planned")
 
-        execution_summary = MoveExecutionSummary(
-            total_completed=1,
-            total_failed=1,
-            total_skipped=0,
-            total_bytes_moved=7,
-            by_error_code={"HASH_MISMATCH": 1},
-        )
-
         output_dir = tmp_path / "report"
-        summary = generate_move_report(session, plan.id, output_dir, execution_summary, 12.5)
+        summary = generate_move_report(session, plan.id, output_dir, 12.5)
 
         assert summary.total_operations == 4
         assert summary.total_completed == 1
@@ -155,4 +156,4 @@ def test_generate_move_report_writes_json_and_csv(engine: Engine, tmp_path: Path
 
 def test_generate_move_report_missing_plan_raises(engine: Engine, tmp_path: Path) -> None:
     with get_session(engine) as session, pytest.raises(ValueError, match="No move plan found"):
-        generate_move_report(session, 999, tmp_path / "report", MoveExecutionSummary(), 0.0)
+        generate_move_report(session, 999, tmp_path / "report", 0.0)

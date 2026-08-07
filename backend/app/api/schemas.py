@@ -85,6 +85,7 @@ class JobRead(BaseModel):
     id: int
     job_type: str
     scan_id: int | None
+    move_plan_id: int | None
     status: str
     total: int
     processed: int
@@ -113,3 +114,59 @@ class MediaMetadataRead(BaseModel):
     rotation: int | None
     profile_description: str | None
     color_space: str | None
+
+
+class DestinationConfigRequest(BaseModel):
+    destination_root: str
+    country_subfolder_enabled: bool = False
+
+
+class DestinationRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scan_id: int
+    routing_group: str
+    destination_root: str
+    country_subfolder_enabled: bool
+    enabled: bool
+
+
+class MovePlanCreateRequest(BaseModel):
+    collision_policy: str = "error"
+    validation_mode: str = "standard"
+
+
+class MoveOperationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    move_plan_id: int
+    media_file_id: int
+    source_path: str
+    planned_destination_path: str
+    actual_destination_path: str | None
+    source_size: int
+    destination_size: int | None
+    source_hash: str | None
+    destination_hash: str | None
+    status: str
+    started_at: datetime | None
+    finished_at: datetime | None
+    error_code: str | None
+    error_message: str | None
+
+
+class MovePlanRead(BaseModel):
+    id: int
+    scan_id: int
+    status: str
+    collision_policy: str
+    validation_mode: str
+    created_at: datetime
+    approved_at: datetime | None
+    total_planned: int
+    total_blocked: int
+    total_bytes_planned: int
+    by_error_code: dict[str, int]
+    operations: list[MoveOperationRead]

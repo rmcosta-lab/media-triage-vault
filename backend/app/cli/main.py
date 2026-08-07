@@ -363,7 +363,7 @@ def execute_command(
         previous_handler = signal.signal(signal.SIGINT, _request_cancel)
         started = time.monotonic()
         try:
-            execution_summary = execute_move_plan(
+            execute_move_plan(
                 session,
                 move_plan.id,
                 validation_mode=validation_mode,
@@ -375,9 +375,7 @@ def execute_command(
         elapsed_seconds = time.monotonic() - started
 
         output.mkdir(parents=True, exist_ok=True)
-        report_summary = generate_move_report(
-            session, move_plan.id, output, execution_summary, elapsed_seconds
-        )
+        report_summary = generate_move_report(session, move_plan.id, output, elapsed_seconds)
 
     typer.echo(
         "Done. "
