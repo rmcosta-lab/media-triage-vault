@@ -3,12 +3,15 @@
 `scan` (roadmap Phase 7, README §37/US-001) wires scan -> media-type
 detection -> batch metadata extraction. `classify`/`override` (roadmap
 Phase 12, README §38/US-002) wire the rule engine + country resolution
-and record manual corrections. Neither ever writes to the scanned source
-tree — only to `--output` (report artifacts) and the SQLite database.
+and record manual corrections. `destinations`/`plan` (roadmap Phase 14,
+README §39/US-003) map routing groups to folders and generate a dry-run
+move plan. None of these ever write to the scanned source tree — only to
+`--output` (report artifacts) and the SQLite database.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,13 +24,16 @@ from backend.app.repositories.classification_repository import ClassificationRep
 from backend.app.repositories.media_file_repository import MediaFileRepository
 from backend.app.rules.engine import ROUTING_GROUPS, ClassificationResult
 from backend.app.services.classification import classify_scan
+from backend.app.services.destinations import DestinationConfig, set_destination_rules
 from backend.app.services.media_type import detect_media_types_for_scan
 from backend.app.services.metadata import extract_metadata_for_scan
+from backend.app.services.move_plan import generate_move_plan
 from backend.app.services.reports import generate_report
 from backend.app.services.scanner import ScanProgress, scan_folder
 
 if TYPE_CHECKING:
     from backend.app.models.media_file import MediaFile
+    from backend.app.models.move_plan import MoveOperation
     from backend.app.services.thumbnails import ThumbnailResult
 
 app = typer.Typer(name="media-organizer", help="Local, offline media triage and organization.")
@@ -205,6 +211,92 @@ def report_command(
 def _report_thumbnail_progress(media: MediaFile, result: ThumbnailResult) -> None:
     status = "ok" if result.success else f"failed ({result.error_code})"
     typer.echo(f"  thumbnail {media.relative_path}: {status}")
+
+
+@app.command("destinations")
+def destinations_command(
+    scan_id: int = typer.Option(..., "--scan-id", help="ID of an existing scan."),
+    config: Path = typer.Option(
+        ...,
+        "--config",
+        exists=True,
+        dir_okay=False,
+        help="JSON file mapping routing_group -> {destination_root, country_subfolder_enabled}.",
+    ),
+    database: Path | None = typer.Option(
+        None, "--database", hidden=True, help="Override the SQLite database path (testing only)."
+    ),
+) -> None:
+    """Map each routing group to a destination folder (README §39, US-003)."""
+    raw_mapping = json.loads(config.read_text(encoding="utf-8"))
+    mapping = {
+        routing_group: DestinationConfig(
+            destination_root=entry["destination_root"],
+            country_subfolder_enabled=entry.get("country_subfolder_enabled", False),
+        )
+        for routing_group, entry in raw_mapping.items()
+    }
+
+    database_path = database if database is not None else get_database_path()
+    engine = get_engine(database_path)
+    create_db_and_tables(engine)
+
+    with get_session(engine) as session:
+        try:
+            rules = set_destination_rules(session, scan_id, mapping)
+        except ValueError as error:
+            typer.echo(str(error))
+            raise typer.Exit(code=1) from error
+
+        for rule in rules:
+            typer.echo(
+                f"  {rule.routing_group} -> {rule.destination_root} "
+                f"(country_subfolder_enabled={rule.country_subfolder_enabled})"
+            )
+        typer.echo(f"Done. {len(rules)} routing group(s) mapped.")
+
+
+@app.command("plan")
+def plan_command(
+    scan_id: int = typer.Option(..., "--scan-id", help="ID of an existing scan."),
+    collision_policy: str = typer.Option("error", "--collision-policy"),
+    validation_mode: str = typer.Option("standard", "--validation-mode"),
+    database: Path | None = typer.Option(
+        None, "--database", hidden=True, help="Override the SQLite database path (testing only)."
+    ),
+) -> None:
+    """Generate a dry-run move plan (README §16 Etapa 5, US-003). Nothing is executed."""
+    database_path = database if database is not None else get_database_path()
+    engine = get_engine(database_path)
+    create_db_and_tables(engine)
+
+    with get_session(engine) as session:
+        try:
+            summary = generate_move_plan(
+                session,
+                scan_id,
+                collision_policy=collision_policy,
+                validation_mode=validation_mode,
+                on_progress=_report_plan_progress,
+            )
+        except ValueError as error:
+            typer.echo(str(error))
+            raise typer.Exit(code=1) from error
+
+    typer.echo("DRY RUN — no files were moved.")
+    typer.echo(
+        "Done. "
+        f"planned={summary.total_planned} blocked={summary.total_blocked} "
+        f"total_bytes_planned={summary.total_bytes_planned} "
+        f"unmapped={summary.unmapped} skipped_unclassified={summary.skipped_unclassified}"
+    )
+    typer.echo(f"By group: {summary.by_group}")
+    typer.echo(f"By error code: {summary.by_error_code}")
+
+
+def _report_plan_progress(media: MediaFile, operation: MoveOperation) -> None:
+    status = "planned" if operation.status == "planned" else f"blocked ({operation.error_code})"
+    typer.echo(f"  {media.relative_path} -> {operation.planned_destination_path}: {status}")
 
 
 if __name__ == "__main__":
