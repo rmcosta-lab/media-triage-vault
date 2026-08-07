@@ -211,6 +211,7 @@ def extract_metadata_for_scan(
     *,
     batch_size: int = DEFAULT_BATCH_SIZE,
     on_progress: Callable[[int], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> MetadataSummary:
     """Extract and persist README §8.2 metadata for every pending row of ``scan_id``."""
     media_file_repository = MediaFileRepository(session)
@@ -226,6 +227,8 @@ def extract_metadata_for_scan(
     processed = 0
 
     for batch_start in range(0, len(rows), batch_size):
+        if should_cancel is not None and should_cancel():
+            break
         batch = rows[batch_start : batch_start + batch_size]
         paths = [Path(row.absolute_path) for row in batch]
         tag_results = _run_exiftool_batch(paths)

@@ -125,6 +125,7 @@ def detect_media_types_for_scan(
     scan_id: int,
     *,
     on_progress: Callable[[int], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> MediaTypeSummary:
     """Run detection over every pending ``MediaFile`` row of ``scan_id`` and persist results."""
     repository = MediaFileRepository(session)
@@ -135,6 +136,8 @@ def detect_media_types_for_scan(
     images = videos = unsupported = mismatches = read_errors = 0
 
     for index, row in enumerate(pending_rows, start=1):
+        if should_cancel is not None and should_cancel():
+            break
         _detect_and_update_row(repository, row)
         if row.error_code == "SIGNATURE_READ_ERROR":
             read_errors += 1

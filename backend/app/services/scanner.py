@@ -46,6 +46,8 @@ def scan_folder(
     exclude_dirs: Sequence[Path] = (),
     batch_size: int = DEFAULT_BATCH_SIZE,
     on_progress: Callable[[ScanProgress], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    on_scan_created: Callable[[Scan], None] | None = None,
 ) -> Scan:
     """Walk ``source_root`` and persist a ``Scan`` and its ``MediaFile`` rows.
 
@@ -70,6 +72,8 @@ def scan_folder(
         )
     )
     assert scan.id is not None
+    if on_scan_created is not None:
+        on_scan_created(scan)
 
     processed_files = 0
     total_bytes = 0
@@ -84,6 +88,7 @@ def scan_folder(
                 ScanProgress(processed_files=processed_files, total_bytes_so_far=total_bytes)
             )
 
+    cancelled = False
     for file_path in _iter_files(source_root, recursive=recursive, excluded=excluded):
         media_file = _build_media_file(scan.id, source_root, file_path)
         buffer.append(media_file)
@@ -92,9 +97,13 @@ def scan_folder(
             total_bytes += media_file.size_bytes
         if len(buffer) >= batch_size:
             flush()
-    flush()
+            if should_cancel is not None and should_cancel():
+                cancelled = True
+                break
+    if not cancelled:
+        flush()
 
-    scan.status = "completed"
+    scan.status = "cancelled" if cancelled else "completed"
     scan.finished_at = datetime.now(UTC)
     scan.total_files = processed_files
     scan.total_bytes = total_bytes
