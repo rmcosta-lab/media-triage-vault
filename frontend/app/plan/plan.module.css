@@ -1,0 +1,99 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 2rem;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.error {
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  border: 1px solid #e5484d;
+  color: #e5484d;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+  border-radius: 8px;
+}
+
+.destinationRow {
+  display: flex;
+  align-items: end;
+  gap: 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  font-size: 0.85rem;
+}
+
+.field input[type="text"] {
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.statusList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+}
+
+.statusList dt {
+  font-size: 0.8rem;
+  color: color-mix(in srgb, var(--foreground) 60%, transparent);
+}
+
+.statusList dd {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+  font-size: 0.85rem;
+}
+
+.page button {
+  align-self: flex-start;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent);
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.page button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
