@@ -34,5 +34,6 @@ class Classification(SQLModel, table=True):
     gps_longitude: float | None = None
     country_code: str | None = None
     country_name: str | None = None
+    override_timestamp: datetime | None = None
 
     media_file: "MediaFile" = Relationship(back_populates="classification")

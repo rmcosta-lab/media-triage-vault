@@ -113,6 +113,7 @@ def test_build_classification_result_custom_review_threshold() -> None:
 def test_synthetic_rule_conforms_to_classification_rule_protocol() -> None:
     class _AlwaysVideoRule:
         name = "always_video"
+        routing_group = "video"
 
         def evaluate(self, media: Any, metadata: dict[str, Any]) -> RuleResult:
             return RuleResult(label="video", score=1.0, reasons=["synthetic"])
