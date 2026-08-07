@@ -96,7 +96,13 @@ phase, run at least `uv run ruff check .`, `uv run mypy backend` and
   PEP 563 that annotation is unparsed source text, which breaks
   `Relationship()`. Use quoted forward references instead
   (`list["MediaFile"]`, `"Scan"`), with the related class imported under
-  `TYPE_CHECKING` to avoid circular imports.
+  `TYPE_CHECKING` to avoid circular imports. A nullable one-to-one
+  `Relationship()` needs `Optional["Target"]`, not `"Target | None"` — the
+  latter is a string SQLAlchemy can't resolve as a forward reference at
+  mapper-configuration time. Also never name a `Relationship()` attribute
+  `metadata` — it collides with SQLAlchemy's reserved `Base.metadata`
+  (Phase 6: `MediaFile.media_metadata` / `MediaMetadata.media_file`).
+- **Tests**: every rule and every failure path gets a test. Move-related code is
 - **Tests**: every rule and every failure path gets a test. Move-related code is
   tested against temp directories, including interrupted and mismatched-hash
   runs. Fixtures live in `backend/tests/fixtures/` and stay small.

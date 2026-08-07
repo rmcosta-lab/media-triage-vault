@@ -1,11 +1,12 @@
 """``MediaFile`` table — README §24.2."""
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
+    from backend.app.models.media_metadata import MediaMetadata
     from backend.app.models.scan import Scan
 
 
@@ -32,3 +33,4 @@ class MediaFile(SQLModel, table=True):
     error_message: str | None = None
 
     scan: "Scan" = Relationship(back_populates="media_files")
+    media_metadata: Optional["MediaMetadata"] = Relationship(back_populates="media_file")
