@@ -8,7 +8,7 @@ Guiding rule: **the engine is read-only until Phase 14.** No code that moves, re
 
 - [x] **Phase 1 — Repo bootstrap.** `pyproject.toml` with uv, Python 3.13, ruff, mypy, pytest, pre-commit; package skeleton `backend/app/`; one trivial passing test. *Done when `uv run pytest` and lint pass clean.*
 - [x] **Phase 2 — Tooling + fixtures.** Vendor/locate ExifTool and FFmpeg under per-platform directories (`tools/exiftool/<platform>/`, `tools/ffmpeg/<platform>/`) behind a single resolver keyed on `sys.platform` + `platform.machine()`; verify invocation via `subprocess` argument lists; create first test fixtures (iPhone JPEG with GPS, HEIC, WhatsApp-named file, screenshot-named PNG, small MP4, JPEG without EXIF). Only the Windows binaries are vendored now — the macOS slot stays empty until post-MVP. *Done when a smoke test runs ExifTool and FFprobe against fixtures through the resolver, never via bare `PATH` lookup.*
-- [ ] **Phase 3 — Data model + SQLite.** SQLModel models for `Scan` and `MediaFile`; database creation under `runtime/database/`; repository layer with basic CRUD. *Done when models round-trip through SQLite in tests.*
+- [x] **Phase 3 — Data model + SQLite.** SQLModel models for `Scan` and `MediaFile`; database creation under `runtime/database/`; repository layer with basic CRUD. *Done when models round-trip through SQLite in tests.*
 
 ## Stage B — Inventory (README Fase 1, US-001)
 
