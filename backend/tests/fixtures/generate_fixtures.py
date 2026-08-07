@@ -97,6 +97,13 @@ def make_jpeg_no_exif() -> None:
     run_tool("exiftool", ["-overwrite_original", "-all=", str(path)], check=True)
 
 
+def make_misnamed_video_as_jpg() -> None:
+    """MP4 content saved under a `.jpg` name — Phase 5's mismatch fixture."""
+    source = FIXTURES_DIR / "sample_video.mp4"
+    target = FIXTURES_DIR / "misnamed_video_as_jpg.jpg"
+    target.write_bytes(source.read_bytes())
+
+
 def main() -> None:
     make_iphone_jpeg_with_gps()
     make_iphone_heic()
@@ -104,6 +111,7 @@ def main() -> None:
     make_screenshot_png()
     make_sample_video()
     make_jpeg_no_exif()
+    make_misnamed_video_as_jpg()
     print(f"Fixtures written to {FIXTURES_DIR}")
 
 
