@@ -23,10 +23,12 @@ from backend.app.rules.engine import ROUTING_GROUPS, ClassificationResult
 from backend.app.services.classification import classify_scan
 from backend.app.services.media_type import detect_media_types_for_scan
 from backend.app.services.metadata import extract_metadata_for_scan
+from backend.app.services.reports import generate_report
 from backend.app.services.scanner import ScanProgress, scan_folder
 
 if TYPE_CHECKING:
     from backend.app.models.media_file import MediaFile
+    from backend.app.services.thumbnails import ThumbnailResult
 
 app = typer.Typer(name="media-organizer", help="Local, offline media triage and organization.")
 
@@ -166,6 +168,43 @@ def override_command(
         repository.update(classification)
 
     typer.echo(f"Overrode media_file_id={media_file_id}: effective_routing_group={routing_group}")
+
+
+@app.command("report")
+def report_command(
+    scan_id: int = typer.Option(..., "--scan-id", help="ID of an existing scan to report on."),
+    output: Path = typer.Option(
+        ..., "--output", help="Directory for report.html/.json/.csv, thumbnails/, and errors.log."
+    ),
+    database: Path | None = typer.Option(
+        None, "--database", hidden=True, help="Override the SQLite database path (testing only)."
+    ),
+) -> None:
+    """Generate the static report (README §43): JSON, CSV, HTML, thumbnails, error log."""
+    output.mkdir(parents=True, exist_ok=True)
+    database_path = database if database is not None else get_database_path()
+    engine = get_engine(database_path)
+    create_db_and_tables(engine)
+
+    with get_session(engine) as session:
+        summary = generate_report(session, scan_id, output, on_progress=_report_thumbnail_progress)
+
+    typer.echo(
+        "Done. "
+        f"files={summary.total_files} thumbnails_generated={summary.thumbnails_generated} "
+        f"thumbnails_failed={summary.thumbnails_failed} "
+        f"low_confidence={summary.low_confidence_count} errors={summary.error_count} "
+        f"by_group={summary.totals_by_group}"
+    )
+    typer.echo(f"Report HTML: {output / 'report.html'}")
+    typer.echo(f"Report JSON: {output / 'report.json'}")
+    typer.echo(f"Report CSV: {output / 'report.csv'}")
+    typer.echo(f"Error log: {output / 'errors.log'}")
+
+
+def _report_thumbnail_progress(media: MediaFile, result: ThumbnailResult) -> None:
+    status = "ok" if result.success else f"failed ({result.error_code})"
+    typer.echo(f"  thumbnail {media.relative_path}: {status}")
 
 
 if __name__ == "__main__":

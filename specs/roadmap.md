@@ -27,7 +27,7 @@ Guiding rule: **the engine is read-only until Phase 14.** No code that moves, re
 
 ## Stage D — Reports (README Fase 3)
 
-- [ ] **Phase 13 — Thumbnails + static reports.** Thumbnail generation (Pillow / pillow-heif / rawpy / FFmpeg frame grab) into a folder relative to the report; Jinja2 `report.html` (fully local assets, basic filters) plus `report.json` and `report.csv`. *Done when the first-delivery checklist (README §43) is met: SQLite + JSON + CSV + HTML + error log, zero source modifications.*
+- [x] **Phase 13 — Thumbnails + static reports.** Thumbnail generation (Pillow / pillow-heif / rawpy / FFmpeg frame grab) into a folder relative to the report; Jinja2 `report.html` (fully local assets, basic filters) plus `report.json` and `report.csv`. *Done when the first-delivery checklist (README §43) is met: SQLite + JSON + CSV + HTML + error log, zero source modifications.*
 
 > **Checkpoint: validate the analysis pipeline on a real folder before writing any move code.**
 
