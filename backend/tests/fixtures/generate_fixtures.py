@@ -104,6 +104,18 @@ def make_misnamed_video_as_jpg() -> None:
     target.write_bytes(source.read_bytes())
 
 
+def make_corrupt_video() -> None:
+    """First 256 bytes of `sample_video.mp4` — Phase 6's VIDEO_UNREADABLE fixture.
+
+    Still starts with a valid `ftyp` box (Phase 5 detects media_kind="video"),
+    but is truncated well before any decodable frame, so FFprobe cannot find
+    a video stream in it.
+    """
+    source = FIXTURES_DIR / "sample_video.mp4"
+    target = FIXTURES_DIR / "corrupt_video.mp4"
+    target.write_bytes(source.read_bytes()[:256])
+
+
 def main() -> None:
     make_iphone_jpeg_with_gps()
     make_iphone_heic()
@@ -112,6 +124,7 @@ def main() -> None:
     make_sample_video()
     make_jpeg_no_exif()
     make_misnamed_video_as_jpg()
+    make_corrupt_video()
     print(f"Fixtures written to {FIXTURES_DIR}")
 
 
