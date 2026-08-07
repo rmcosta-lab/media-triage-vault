@@ -68,10 +68,17 @@ Explicitly **not** in scope before the MVP closes: macOS CI runners, macOS fixtu
 
 ## Frontend (Phase C)
 
-- **Next.js** + **TypeScript** + **React**
-- **TanStack Table** — inventory/review grid
-- **Zod** — API response validation
+- **Next.js** (App Router) + **TypeScript** + **React**, no Tailwind/UI
+  library pinned — plain CSS Modules until a phase actually needs one
+- **TanStack Table** — inventory/review grid (Phase 21)
+- **Zod** — API response validation, parsed at the API-client boundary
+  (`frontend/lib/api.ts`)
 - **pnpm** with lockfile
+- Progress: the browser's native `EventSource` against the backend's
+  SSE endpoints (Phase 18) — no extra dependency
+- CORS: the API allows only `localhost`/`127.0.0.1` origins (any port,
+  via `allow_origin_regex`) — required because the browser enforces
+  CORS across ports even when both ends are local (Phase 20)
 
 ## Desktop (post-MVP)
 
