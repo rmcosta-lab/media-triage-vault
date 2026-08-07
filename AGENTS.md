@@ -77,9 +77,14 @@ phase, run at least `uv run ruff check .`, `uv run mypy backend` and
 
 - **Dependencies**: `uv` only, pinned in `uv.lock`. Adding a dependency that is
   not in `specs/tech-stack.md` needs a decision recorded there first.
-- **External tools**: ExifTool and FFprobe are resolved through the bundled
-  per-platform resolver, never from a bare `PATH` lookup. Invoke them with
-  `subprocess` argument lists — never a shell string, never `shell=True`.
+- **External tools**: ExifTool is resolved through the bundled per-platform
+  resolver, never from a bare `PATH` lookup. FFmpeg/FFprobe are an interim
+  exception (Phase 2, see `specs/tech-stack.md` "Bundled binaries"): too
+  large to vendor into git for the MVP, so the resolver discovers them once
+  via `shutil.which` and still centralizes the lookup behind
+  `resolve_tool()` — no call site invokes a bare command string directly.
+  Invoke every tool with `subprocess` argument lists — never a shell
+  string, never `shell=True`.
 - **Paths**: store and compare NFC-normalized; pass the OS-native form to every
   filesystem call. Sanitize destination names to the portable intersection and
   check the 260-character Windows limit at plan time.

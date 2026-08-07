@@ -22,7 +22,7 @@ macOS is a secondary target: **the code is written to run there, but it is not v
 
 | Concern | Rule | From |
 |---|---|---|
-| Bundled binaries | `tools/exiftool/<platform>/` and `tools/ffmpeg/<platform>/` (`windows-x64`, `macos-arm64`); a single resolver picks by `sys.platform` + `platform.machine()`. Never call a bare `exiftool`/`ffprobe` from `PATH`. | Phase 2 |
+| Bundled binaries | `tools/exiftool/<platform>/` (`windows-x64`, `macos-arm64`); a single resolver picks by `sys.platform` + `platform.machine()`. **Interim exception (Phase 2):** FFmpeg/FFprobe are *not* vendored — the ~100-250MB Windows build is too large to commit to git history for the MVP. The resolver discovers them once via `shutil.which` (system-installed, e.g. `winget install Gyan.FFmpeg`) behind the same `resolve_tool()` API, so call sites never hardcode a bare command string. True vendoring (or Git LFS) is revisited when Tauri packaging needs a self-contained sidecar. | Phase 2 |
 | Unicode normalization | Filenames reach the app as NFC (NTFS, exFAT) or NFD (HFS+, and anything written by older macOS). Store and compare paths **NFC-normalized**; pass the **OS-native form** to every filesystem call. A collection that crossed platforms will contain both. | Phase 4 |
 | Case sensitivity | NTFS, exFAT and default APFS are case-insensitive. Collision detection must treat `Foto.jpg` and `foto.jpg` as colliding on those volumes. | Phase 14 |
 | Destination names | Sanitize to the strict intersection: no `<>:"/\|?*`, no trailing dot or space, no Windows reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`). A vault built anywhere must open on Windows. | Phase 14 |
