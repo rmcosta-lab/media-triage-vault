@@ -1,11 +1,15 @@
-"""API routes — README §25, roadmap Phases 17-18.
+"""API routes — README §25, roadmap Phases 17-19.
 
 The `GET` routes (Phase 17) only read data the CLI already produced, plus
 on-demand thumbnail generation reusing Phase 13's `generate_thumbnail`.
 The `POST /scans*` routes and `GET /jobs/*` (Phase 18) queue and observe
 background scan/classify jobs via `services.job_runner` — the response
 returns immediately with a `Job`; the work happens on a separate thread.
-Plan/execute triggers are still Phase 19's job.
+The destinations/move-plan/execute routes (Phase 19) close the loop:
+`PUT .../destinations` and `POST .../move-plan` run synchronously (same
+cost as the CLI's `destinations`/`plan` commands); `POST
+/move-plans/{id}/execute` queues another background job (job_type=
+"execute") whose `id` doubles as README §25's "move run" id.
 """
 
 from __future__ import annotations
@@ -13,7 +17,9 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -23,24 +29,68 @@ from sqlmodel import Session
 from backend.app.api.deps import get_session_dependency, get_thumbnail_cache_dir_dependency
 from backend.app.api.schemas import (
     ClassificationRead,
+    DestinationConfigRequest,
+    DestinationRuleRead,
     JobRead,
     MediaFileRead,
     MediaMetadataRead,
+    MoveOperationRead,
+    MovePlanCreateRequest,
+    MovePlanRead,
     ScanCreateRequest,
     ScanRead,
 )
+from backend.app.models.job import Job
+from backend.app.models.move_plan import MovePlan
 from backend.app.repositories.classification_repository import ClassificationRepository
 from backend.app.repositories.job_repository import JobRepository
 from backend.app.repositories.media_file_repository import MediaFileRepository
 from backend.app.repositories.media_metadata_repository import MediaMetadataRepository
+from backend.app.repositories.move_operation_repository import MoveOperationRepository
+from backend.app.repositories.move_plan_repository import MovePlanRepository
 from backend.app.repositories.scan_repository import ScanRepository
-from backend.app.services.job_runner import submit_classify_job, submit_scan_job
+from backend.app.services.destinations import DestinationConfig, set_destination_rules
+from backend.app.services.job_runner import (
+    submit_classify_job,
+    submit_execute_job,
+    submit_scan_job,
+)
+from backend.app.services.move_plan import generate_move_plan
+from backend.app.services.move_report import build_move_report_payload
+from backend.app.services.reports import build_report_payload
 from backend.app.services.thumbnails import generate_thumbnail
 
 JOB_TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _SSE_POLL_INTERVAL_SECONDS = 0.3
 
 router = APIRouter()
+
+
+def _build_move_plan_read(session: Session, move_plan: MovePlan) -> MovePlanRead:
+    assert move_plan.id is not None
+    operations = list(MoveOperationRepository(session).list_by_plan(move_plan.id))
+    total_planned = sum(1 for op in operations if op.status == "planned")
+    total_blocked = sum(1 for op in operations if op.status == "blocked")
+    total_bytes_planned = sum(op.source_size for op in operations if op.status == "planned")
+    by_error_code: dict[str, int] = {}
+    for op in operations:
+        if op.status == "blocked" and op.error_code is not None:
+            by_error_code[op.error_code] = by_error_code.get(op.error_code, 0) + 1
+
+    return MovePlanRead(
+        id=move_plan.id,
+        scan_id=move_plan.scan_id,
+        status=move_plan.status,
+        collision_policy=move_plan.collision_policy,
+        validation_mode=move_plan.validation_mode,
+        created_at=move_plan.created_at,
+        approved_at=move_plan.approved_at,
+        total_planned=total_planned,
+        total_blocked=total_blocked,
+        total_bytes_planned=total_bytes_planned,
+        by_error_code=by_error_code,
+        operations=[MoveOperationRead.model_validate(op) for op in operations],
+    )
 
 
 @router.get("/scans/{scan_id}", response_model=ScanRead)
@@ -200,3 +250,142 @@ async def stream_job_events(
             await asyncio.sleep(_SSE_POLL_INTERVAL_SECONDS)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.put("/scans/{scan_id}/destinations", response_model=list[DestinationRuleRead])
+def put_scan_destinations(
+    scan_id: int,
+    mapping: dict[str, DestinationConfigRequest],
+    session: Session = Depends(get_session_dependency),
+) -> list[DestinationRuleRead]:
+    """Map each routing group to a destination folder (README §39, US-003)."""
+    scan = ScanRepository(session).get(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail=f"No scan found for scan_id={scan_id}")
+
+    config = {
+        routing_group: DestinationConfig(
+            destination_root=entry.destination_root,
+            country_subfolder_enabled=entry.country_subfolder_enabled,
+        )
+        for routing_group, entry in mapping.items()
+    }
+    try:
+        rules = set_destination_rules(session, scan_id, config)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    return [DestinationRuleRead.model_validate(rule) for rule in rules]
+
+
+@router.post("/scans/{scan_id}/move-plan", response_model=MovePlanRead, status_code=201)
+def create_move_plan(
+    scan_id: int,
+    request: MovePlanCreateRequest,
+    session: Session = Depends(get_session_dependency),
+) -> MovePlanRead:
+    """Generate a dry-run move plan (README §16 Etapa 5, US-003). Nothing is executed."""
+    scan = ScanRepository(session).get(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail=f"No scan found for scan_id={scan_id}")
+
+    try:
+        generate_move_plan(
+            session,
+            scan_id,
+            collision_policy=request.collision_policy,
+            validation_mode=request.validation_mode,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    move_plan = MovePlanRepository(session).get_latest_for_scan(scan_id)
+    assert move_plan is not None
+    return _build_move_plan_read(session, move_plan)
+
+
+@router.get("/move-plans/{plan_id}", response_model=MovePlanRead)
+def get_move_plan(plan_id: int, session: Session = Depends(get_session_dependency)) -> MovePlanRead:
+    move_plan = MovePlanRepository(session).get(plan_id)
+    if move_plan is None:
+        raise HTTPException(status_code=404, detail=f"No move plan found for plan_id={plan_id}")
+    return _build_move_plan_read(session, move_plan)
+
+
+@router.post("/move-plans/{plan_id}/approve", response_model=MovePlanRead)
+def approve_move_plan(
+    plan_id: int, session: Session = Depends(get_session_dependency)
+) -> MovePlanRead:
+    """Explicit confirmation step (README §16 Etapa 6) before `execute` will run this plan."""
+    move_plan_repository = MovePlanRepository(session)
+    move_plan = move_plan_repository.get(plan_id)
+    if move_plan is None:
+        raise HTTPException(status_code=404, detail=f"No move plan found for plan_id={plan_id}")
+
+    move_plan.approved_at = datetime.now(UTC)
+    move_plan_repository.update(move_plan)
+    return _build_move_plan_read(session, move_plan)
+
+
+@router.post("/move-plans/{plan_id}/execute", response_model=JobRead, status_code=202)
+def execute_move_plan_route(
+    plan_id: int, session: Session = Depends(get_session_dependency)
+) -> JobRead:
+    """Queue execution of an approved move plan. The returned `Job.id` is the move-run id."""
+    move_plan = MovePlanRepository(session).get(plan_id)
+    if move_plan is None:
+        raise HTTPException(status_code=404, detail=f"No move plan found for plan_id={plan_id}")
+    if move_plan.approved_at is None:
+        raise HTTPException(status_code=400, detail="Plan must be approved before execution")
+
+    job = submit_execute_job(session, plan_id)
+    return JobRead.model_validate(job)
+
+
+@router.get("/move-runs/{run_id}", response_model=JobRead)
+def get_move_run(run_id: int, session: Session = Depends(get_session_dependency)) -> JobRead:
+    job = _get_execute_job_or_404(session, run_id)
+    return JobRead.model_validate(job)
+
+
+@router.post("/move-runs/{run_id}/cancel", response_model=JobRead)
+def cancel_move_run(run_id: int, session: Session = Depends(get_session_dependency)) -> JobRead:
+    repository = JobRepository(session)
+    job = _get_execute_job_or_404(session, run_id)
+    job.cancel_requested = True
+    repository.update(job)
+    return JobRead.model_validate(job)
+
+
+@router.get("/move-runs/{run_id}/report")
+def get_move_run_report(
+    run_id: int, session: Session = Depends(get_session_dependency)
+) -> dict[str, Any]:
+    job = _get_execute_job_or_404(session, run_id)
+    assert job.move_plan_id is not None
+
+    elapsed_seconds = 0.0
+    if job.started_at is not None and job.finished_at is not None:
+        elapsed_seconds = (job.finished_at - job.started_at).total_seconds()
+
+    try:
+        return build_move_report_payload(session, job.move_plan_id, elapsed_seconds)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/scans/{scan_id}/report")
+def get_scan_report(
+    scan_id: int, session: Session = Depends(get_session_dependency)
+) -> dict[str, Any]:
+    try:
+        return build_report_payload(session, scan_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+def _get_execute_job_or_404(session: Session, run_id: int) -> Job:
+    job = JobRepository(session).get(run_id)
+    if job is None or job.job_type != "execute":
+        raise HTTPException(status_code=404, detail=f"No move run found for run_id={run_id}")
+    return job
