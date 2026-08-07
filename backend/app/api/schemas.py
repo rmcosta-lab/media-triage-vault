@@ -74,6 +74,28 @@ class ClassificationRead(BaseModel):
     override_timestamp: datetime | None
 
 
+class ScanCreateRequest(BaseModel):
+    source_root: str
+    recursive: bool = True
+
+
+class JobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_type: str
+    scan_id: int | None
+    status: str
+    total: int
+    processed: int
+    message: str | None
+    error_code: str | None
+    error_message: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
 class MediaMetadataRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

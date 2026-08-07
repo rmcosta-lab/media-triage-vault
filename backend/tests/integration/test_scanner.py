@@ -176,6 +176,25 @@ def test_scan_folder_invokes_progress_callback(engine: Engine, tmp_path: Path) -
     assert progress_events[-1].processed_files == 5
 
 
+def test_scan_folder_honors_should_cancel_between_batches(engine: Engine, tmp_path: Path) -> None:
+    root = tmp_path / "source"
+    root.mkdir()
+    for index in range(6):
+        (root / f"file{index}.jpg").write_bytes(b"x")
+
+    with get_session(engine) as session:
+        scan = scan_folder(
+            session,
+            root,
+            recursive=True,
+            batch_size=2,
+            should_cancel=lambda: True,
+        )
+
+    assert scan.status == "cancelled"
+    assert scan.total_files == 2  # only the first flushed batch was persisted
+
+
 def test_scan_folder_rejects_missing_source_root(engine: Engine, tmp_path: Path) -> None:
     with get_session(engine) as session, pytest.raises(InvalidSourceRootError):
         scan_folder(session, tmp_path / "missing", recursive=True)

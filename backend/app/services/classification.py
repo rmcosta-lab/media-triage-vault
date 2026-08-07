@@ -105,6 +105,7 @@ def classify_scan(
     scan_id: int,
     *,
     on_progress: Callable[[MediaFile, ClassificationResult], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> ClassificationSummary:
     """Classify every `image`/`video` row of `scan_id` and persist `Classification` rows."""
     media_file_repository = MediaFileRepository(session)
@@ -116,6 +117,8 @@ def classify_scan(
     skipped = 0
 
     for media in media_file_repository.list_by_scan(scan_id):
+        if should_cancel is not None and should_cancel():
+            break
         if media.media_kind not in ("image", "video") or media.id is None:
             skipped += 1
             continue
