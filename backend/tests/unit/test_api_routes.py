@@ -253,3 +253,13 @@ def test_docs_disabled_openapi_enabled(client: TestClient) -> None:
     assert client.get("/docs").status_code == 404
     assert client.get("/redoc").status_code == 404
     assert client.get("/openapi.json").status_code == 200
+
+
+def test_cors_allows_local_frontend_origin(client: TestClient) -> None:
+    response = client.get("/api/scans/999", headers={"Origin": "http://localhost:3000"})
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+
+def test_cors_rejects_non_local_origin(client: TestClient) -> None:
+    response = client.get("/api/scans/999", headers={"Origin": "https://example.com"})
+    assert "access-control-allow-origin" not in response.headers

@@ -1,0 +1,120 @@
+.page {
+  display: flex;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  min-height: 100%;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  width: 100%;
+  max-width: 640px;
+}
+
+.subtitle {
+  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+  margin-top: -0.75rem;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+  border-radius: 8px;
+}
+
+.field,
+.checkboxField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.checkboxField {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.field input[type="text"] {
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 1rem;
+}
+
+.button {
+  align-self: flex-start;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent);
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error {
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  border: 1px solid #e5484d;
+  color: #e5484d;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+  border-radius: 8px;
+}
+
+.statusList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.statusList dt {
+  font-size: 0.8rem;
+  color: color-mix(in srgb, var(--foreground) 60%, transparent);
+}
+
+.statusList dd {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.groupList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.groupList li {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+
+.groupName {
+  text-transform: capitalize;
+}
+
+.groupCount {
+  font-weight: 600;
+}
