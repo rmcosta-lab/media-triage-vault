@@ -110,8 +110,18 @@ phase, run at least `uv run ruff check .`, `uv run mypy backend` and
   (`ThumbFormat`, `LibRawError`, ...) under `TYPE_CHECKING` in its own
   `__init__.py`, which trips mypy strict's no-implicit-reexport check —
   import those specific names from `rawpy._rawpy` directly instead of
-  `rawpy`; `rawpy.imread` itself is unaffected.
-- **Tests**: every rule and every failure path gets a test. Move-related code is
+  `rawpy`; `rawpy.imread` itself is unaffected. SQLite round-trips a
+  `datetime` column as **naive** even when it was written timezone-aware
+  (Phase 14) — reattach `tzinfo=UTC` to a value read back from the
+  database before comparing it to a freshly computed aware `datetime`
+  (e.g. from `datetime.fromtimestamp(..., tz=UTC)`), or the comparison
+  silently returns "not equal" every time instead of raising. A
+  repository method that replaces a table's rows for some key (delete
+  the old set, insert the new one) must `session.flush()` between the
+  deletes and the inserts (Phase 14,
+  `DestinationRuleRepository.replace_for_scan`) — SQLAlchemy's default
+  flush order runs inserts before deletes, which trips a unique
+  constraint shared between an old row and its replacement.
 - **Tests**: every rule and every failure path gets a test. Move-related code is
   tested against temp directories, including interrupted and mismatched-hash
   runs. Fixtures live in `backend/tests/fixtures/` and stay small.
