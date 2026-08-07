@@ -43,7 +43,7 @@ These come from `specs/mission.md` and override convenience:
 Directories appear as their phase lands; do not create them ahead of time.
 
 ```text
-backend/app/{api,core,models,repositories,services,rules,templates}
+backend/app/{api,cli,core,models,repositories,services,rules,templates}
 backend/tests/{unit,integration,fixtures}
 backend/data/geography/countries.geojson
 frontend/                  # Stage G onwards
@@ -106,6 +106,13 @@ phase, run at least `uv run ruff check .`, `uv run mypy backend` and
 - **Tests**: every rule and every failure path gets a test. Move-related code is
   tested against temp directories, including interrupted and mismatched-hash
   runs. Fixtures live in `backend/tests/fixtures/` and stay small.
+- **CLI**: every `media-organizer` subcommand hangs off the single `app`
+  in `backend/app/cli/main.py` (Phase 7). Keep the `@app.callback()`
+  there even if it stays a no-op — without it, Typer collapses an app with
+  exactly one `@app.command()` into a bare single-command CLI and drops the
+  subcommand name (`media-organizer scan ...` would stop parsing as
+  written). Command bodies only orchestrate existing services; no new
+  detection/extraction/classification logic belongs in `cli/`.
 - **Language**: code, comments, specs, and commit messages in English.
 
 ## Testing on real data
