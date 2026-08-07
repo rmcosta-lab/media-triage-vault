@@ -25,6 +25,8 @@ class MediaFile(SQLModel, table=True):
     height: int | None = None
     duration_seconds: float | None = None
     metadata_json: str | None = None
+    media_kind: str | None = None
+    extension_mismatch: bool = False
     processing_status: str
     error_code: str | None = None
     error_message: str | None = None
