@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { createColumnHelper, tableFeatures, useTable } from "@tanstack/react-table";
@@ -194,6 +195,7 @@ export default function ReviewDashboard() {
   return (
     <main className={styles.page}>
       <h1>Review — scan #{scanId}</h1>
+      <Link href={`/plan?scanId=${scanId}`}>Plan move →</Link>
 
       <div className={styles.filters}>
         <label>

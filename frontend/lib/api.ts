@@ -125,6 +125,77 @@ const ClassificationSchema = z.object({
 });
 export type Classification = z.infer<typeof ClassificationSchema>;
 
+const DestinationRuleSchema = z.object({
+  id: z.number(),
+  scan_id: z.number(),
+  routing_group: z.string(),
+  destination_root: z.string(),
+  country_subfolder_enabled: z.boolean(),
+  enabled: z.boolean(),
+});
+export type DestinationRule = z.infer<typeof DestinationRuleSchema>;
+
+const MoveOperationSchema = z.object({
+  id: z.number(),
+  move_plan_id: z.number(),
+  media_file_id: z.number(),
+  source_path: z.string(),
+  planned_destination_path: z.string(),
+  actual_destination_path: z.string().nullable(),
+  source_size: z.number(),
+  destination_size: z.number().nullable(),
+  status: z.string(),
+  error_code: z.string().nullable(),
+  error_message: z.string().nullable(),
+});
+export type MoveOperation = z.infer<typeof MoveOperationSchema>;
+
+const MovePlanSchema = z.object({
+  id: z.number(),
+  scan_id: z.number(),
+  status: z.string(),
+  collision_policy: z.string(),
+  validation_mode: z.string(),
+  created_at: z.string(),
+  approved_at: z.string().nullable(),
+  total_planned: z.number(),
+  total_blocked: z.number(),
+  total_bytes_planned: z.number(),
+  by_error_code: z.record(z.string(), z.number()),
+  operations: z.array(MoveOperationSchema),
+});
+export type MovePlan = z.infer<typeof MovePlanSchema>;
+
+const MoveReportOperationSchema = z.object({
+  media_file_id: z.number(),
+  source_path: z.string(),
+  planned_destination_path: z.string(),
+  actual_destination_path: z.string().nullable(),
+  status: z.string(),
+  source_size: z.number(),
+  destination_size: z.number().nullable(),
+  error_code: z.string().nullable(),
+  error_message: z.string().nullable(),
+});
+
+const MoveReportSchema = z.object({
+  move_plan_id: z.number(),
+  scan_id: z.number(),
+  elapsed_seconds: z.number(),
+  totals: z.object({
+    operations: z.number(),
+    completed: z.number(),
+    failed: z.number(),
+    skipped: z.number(),
+    blocked: z.number(),
+    still_planned: z.number(),
+    bytes_moved: z.number(),
+  }),
+  by_error_code: z.record(z.string(), z.number()),
+  operations: z.array(MoveReportOperationSchema),
+});
+export type MoveReport = z.infer<typeof MoveReportSchema>;
+
 async function requestJson<T>(
   path: string,
   schema: z.ZodType<T>,
@@ -180,6 +251,44 @@ export function overrideClassification(
     method: "PATCH",
     body: JSON.stringify({ routing_group: routingGroup }),
   });
+}
+
+export interface DestinationConfigInput {
+  destination_root: string;
+  country_subfolder_enabled: boolean;
+}
+
+export function putDestinations(
+  scanId: number,
+  mapping: Record<string, DestinationConfigInput>,
+): Promise<DestinationRule[]> {
+  return requestJson(`/api/scans/${scanId}/destinations`, z.array(DestinationRuleSchema), {
+    method: "PUT",
+    body: JSON.stringify(mapping),
+  });
+}
+
+export function createMovePlan(scanId: number): Promise<MovePlan> {
+  return requestJson(`/api/scans/${scanId}/move-plan`, MovePlanSchema, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function getMovePlan(planId: number): Promise<MovePlan> {
+  return requestJson(`/api/move-plans/${planId}`, MovePlanSchema);
+}
+
+export function approveMovePlan(planId: number): Promise<MovePlan> {
+  return requestJson(`/api/move-plans/${planId}/approve`, MovePlanSchema, { method: "POST" });
+}
+
+export function executeMovePlan(planId: number): Promise<Job> {
+  return requestJson(`/api/move-plans/${planId}/execute`, JobSchema, { method: "POST" });
+}
+
+export function getMoveRunReport(runId: number): Promise<MoveReport> {
+  return requestJson(`/api/move-runs/${runId}/report`, MoveReportSchema);
 }
 
 /** Subscribe to a job's live progress over SSE. Returns an unsubscribe function. */
