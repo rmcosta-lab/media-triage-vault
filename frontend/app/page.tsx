@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import styles from "./page.module.css";
 import {
@@ -224,6 +225,7 @@ export default function Dashboard() {
                 </li>
               ))}
             </ul>
+            {scan && <Link href={`/review?scanId=${scan.id}`}>Review files →</Link>}
           </section>
         )}
       </main>

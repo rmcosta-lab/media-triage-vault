@@ -182,6 +182,82 @@ def test_get_file_classification_no_classification_yet_returns_404(
     assert response.status_code == 404
 
 
+def test_patch_file_classification_overrides_and_persists(
+    client: TestClient, engine: Engine, tmp_path: Path
+) -> None:
+    with Session(engine) as session:
+        scan_id = _seed_scan(session)
+        media_file = _seed_media_file(session, scan_id, tmp_path, "photo.jpg")
+        assert media_file.id is not None
+        ClassificationRepository(session).create(
+            Classification(
+                media_file_id=media_file.id,
+                media_kind="image",
+                source_origin="iphone",
+                image_format="standard",
+                automatic_routing_group="iphone_photo",
+                effective_routing_group="iphone_photo",
+                confidence=0.95,
+                requires_review=False,
+                reasons_json="[]",
+            )
+        )
+        file_id = media_file.id
+
+    response = client.patch(f"/api/files/{file_id}/classification", json={"routing_group": "other"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["manual_routing_group"] == "other"
+    assert body["effective_routing_group"] == "other"
+    assert body["automatic_routing_group"] == "iphone_photo"
+    assert body["override_timestamp"] is not None
+
+    persisted = client.get(f"/api/files/{file_id}/classification").json()
+    assert persisted["effective_routing_group"] == "other"
+    assert persisted["manual_routing_group"] == "other"
+
+
+def test_patch_file_classification_invalid_group_returns_400(
+    client: TestClient, engine: Engine, tmp_path: Path
+) -> None:
+    with Session(engine) as session:
+        scan_id = _seed_scan(session)
+        media_file = _seed_media_file(session, scan_id, tmp_path, "photo.jpg")
+        assert media_file.id is not None
+        ClassificationRepository(session).create(
+            Classification(
+                media_file_id=media_file.id,
+                media_kind="image",
+                source_origin="other",
+                image_format="standard",
+                automatic_routing_group="other",
+                effective_routing_group="other",
+                confidence=0.5,
+                requires_review=True,
+                reasons_json="[]",
+            )
+        )
+        file_id = media_file.id
+
+    response = client.patch(
+        f"/api/files/{file_id}/classification", json={"routing_group": "not_a_group"}
+    )
+    assert response.status_code == 400
+
+
+def test_patch_file_classification_missing_classification_returns_404(
+    client: TestClient, engine: Engine, tmp_path: Path
+) -> None:
+    with Session(engine) as session:
+        scan_id = _seed_scan(session)
+        media_file = _seed_media_file(session, scan_id, tmp_path, "photo.jpg")
+        file_id = media_file.id
+
+    response = client.patch(f"/api/files/{file_id}/classification", json={"routing_group": "other"})
+    assert response.status_code == 404
+
+
 def test_get_file_metadata_happy_path_excludes_coordinates(
     client: TestClient, engine: Engine, tmp_path: Path
 ) -> None:

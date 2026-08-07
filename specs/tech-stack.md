@@ -70,7 +70,12 @@ Explicitly **not** in scope before the MVP closes: macOS CI runners, macOS fixtu
 
 - **Next.js** (App Router) + **TypeScript** + **React**, no Tailwind/UI
   library pinned — plain CSS Modules until a phase actually needs one
-- **TanStack Table** — inventory/review grid (Phase 21)
+- **TanStack Table** — inventory/review grid (Phase 21). The installed
+  version (9.x) uses a redesigned API (`useTable`/`tableFeatures`/
+  `createColumnHelper`/`table.FlexRender`) that is a hard break from the
+  commonly-known v8 API (`useReactTable`/`getCoreRowModel`/`flexRender`)
+  — read `node_modules/@tanstack/*/skills/*/SKILL.md` (bundled with the
+  package) before writing table code in a later phase
 - **Zod** — API response validation, parsed at the API-client boundary
   (`frontend/lib/api.ts`)
 - **pnpm** with lockfile
