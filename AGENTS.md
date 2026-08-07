@@ -89,7 +89,14 @@ phase, run at least `uv run ruff check .`, `uv run mypy backend` and
   filesystem call. Sanitize destination names to the portable intersection and
   check the 260-character Windows limit at plan time.
 - **Types**: SQLModel is the single model layer (validation + persistence). No
-  parallel Pydantic schemas duplicating a table.
+  parallel Pydantic schemas duplicating a table. Table modules that declare a
+  `Relationship()` (Phase 3, see `backend/app/models/`) must **not** use
+  `from __future__ import annotations` — SQLModel resolves relationship
+  targets from the raw class annotation at class-creation time, and under
+  PEP 563 that annotation is unparsed source text, which breaks
+  `Relationship()`. Use quoted forward references instead
+  (`list["MediaFile"]`, `"Scan"`), with the related class imported under
+  `TYPE_CHECKING` to avoid circular imports.
 - **Tests**: every rule and every failure path gets a test. Move-related code is
   tested against temp directories, including interrupted and mismatched-hash
   runs. Fixtures live in `backend/tests/fixtures/` and stay small.
