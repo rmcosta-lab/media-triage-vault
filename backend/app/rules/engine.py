@@ -38,9 +38,17 @@ class RuleResult:
 
 
 class ClassificationRule(Protocol):
-    """README §15.1 — the interface every concrete rule implements."""
+    """README §15.1 — the interface every concrete rule implements.
+
+    ``routing_group`` extends README's own protocol sketch: every concrete
+    rule (Phase 9/10) nominates exactly one fixed routing group, which is
+    what an orchestrator (Phase 12) needs to build the
+    ``resolve_routing_group`` candidates mapping without hardcoding a
+    rule-to-group lookup table elsewhere.
+    """
 
     name: str
+    routing_group: str
 
     def evaluate(self, media: MediaFile, metadata: dict[str, Any]) -> RuleResult: ...
 
