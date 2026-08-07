@@ -8,7 +8,11 @@ dependencies = [
     "pillow>=11.0.0",
     "pillow-heif>=0.21.0",
     "sqlmodel>=0.0.24",
+    "typer>=0.15.0",
 ]
+
+[project.scripts]
+media-organizer = "backend.app.cli.main:app"
 
 [dependency-groups]
 dev = [
@@ -40,6 +44,12 @@ extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Typer's documented pattern is `= typer.Argument(...)` / `= typer.Option(...)`
+# as parameter defaults — these calls are immutable declarations, not the
+# mutable-default footgun B008 exists to catch.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
 
 [tool.ruff.format]
 quote-style = "double"
