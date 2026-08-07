@@ -79,6 +79,10 @@ class ScanCreateRequest(BaseModel):
     recursive: bool = True
 
 
+class ClassificationOverrideRequest(BaseModel):
+    routing_group: str
+
+
 class JobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

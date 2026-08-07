@@ -10,3 +10,6 @@ dist/
 
 # Generated at run time, never committed
 runtime/
+
+# playwright-cli scratch output (snapshots/console logs from manual testing)
+.playwright-cli/

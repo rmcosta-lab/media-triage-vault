@@ -15,6 +15,21 @@ function getBaseUrl(): string {
   return process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_BASE_URL;
 }
 
+/** The API base URL, for building a direct resource URL (e.g. an `<img src>`). */
+export function getApiBaseUrl(): string {
+  return getBaseUrl();
+}
+
+/** Mirrors `rules/engine.py::ROUTING_GROUPS` — stable and small enough not to fetch. */
+export const ROUTING_GROUPS = [
+  "video",
+  "mobile_screenshot",
+  "whatsapp_received",
+  "iphone_raw",
+  "iphone_photo",
+  "other",
+] as const;
+
 export class ApiError extends Error {
   status: number;
 
@@ -62,6 +77,34 @@ export function isJobTerminal(job: Job): boolean {
   return (JOB_TERMINAL_STATUSES as readonly string[]).includes(job.status);
 }
 
+const ScanReportFileSchema = z.object({
+  media_file_id: z.number(),
+  relative_path: z.string(),
+  media_kind: z.string().nullable(),
+  extension: z.string(),
+  size_bytes: z.number(),
+  width: z.number().nullable(),
+  height: z.number().nullable(),
+  duration_seconds: z.number().nullable(),
+  capture_datetime: z.string().nullable(),
+  make: z.string().nullable(),
+  model: z.string().nullable(),
+  software: z.string().nullable(),
+  lens_model: z.string().nullable(),
+  routing_group: z.string(),
+  source_origin: z.string().nullable(),
+  image_format: z.string().nullable(),
+  confidence: z.number().nullable(),
+  requires_review: z.boolean(),
+  reasons: z.array(z.string()),
+  country_code: z.string().nullable(),
+  country_name: z.string().nullable(),
+  manual_override: z.boolean(),
+  error_code: z.string().nullable(),
+  error_message: z.string().nullable(),
+});
+export type ScanReportFile = z.infer<typeof ScanReportFileSchema>;
+
 const ScanReportSchema = z.object({
   generated_at: z.string(),
   source_root: z.string(),
@@ -69,8 +112,18 @@ const ScanReportSchema = z.object({
   total_bytes: z.number(),
   totals_by_group: z.record(z.string(), z.number()),
   totals_by_country: z.record(z.string(), z.number()),
+  files: z.array(ScanReportFileSchema),
 });
 export type ScanReport = z.infer<typeof ScanReportSchema>;
+
+const ClassificationSchema = z.object({
+  id: z.number(),
+  media_file_id: z.number(),
+  effective_routing_group: z.string(),
+  manual_routing_group: z.string().nullable(),
+  automatic_routing_group: z.string(),
+});
+export type Classification = z.infer<typeof ClassificationSchema>;
 
 async function requestJson<T>(
   path: string,
@@ -117,6 +170,16 @@ export function getScan(scanId: number): Promise<Scan> {
 
 export function getScanReport(scanId: number): Promise<ScanReport> {
   return requestJson(`/api/scans/${scanId}/report`, ScanReportSchema);
+}
+
+export function overrideClassification(
+  fileId: number,
+  routingGroup: string,
+): Promise<Classification> {
+  return requestJson(`/api/files/${fileId}/classification`, ClassificationSchema, {
+    method: "PATCH",
+    body: JSON.stringify({ routing_group: routingGroup }),
+  });
 }
 
 /** Subscribe to a job's live progress over SSE. Returns an unsubscribe function. */

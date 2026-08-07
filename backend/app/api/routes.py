@@ -28,6 +28,7 @@ from sqlmodel import Session
 
 from backend.app.api.deps import get_session_dependency, get_thumbnail_cache_dir_dependency
 from backend.app.api.schemas import (
+    ClassificationOverrideRequest,
     ClassificationRead,
     DestinationConfigRequest,
     DestinationRuleRead,
@@ -49,6 +50,7 @@ from backend.app.repositories.media_metadata_repository import MediaMetadataRepo
 from backend.app.repositories.move_operation_repository import MoveOperationRepository
 from backend.app.repositories.move_plan_repository import MovePlanRepository
 from backend.app.repositories.scan_repository import ScanRepository
+from backend.app.rules.engine import ROUTING_GROUPS
 from backend.app.services.destinations import DestinationConfig, set_destination_rules
 from backend.app.services.job_runner import (
     submit_classify_job,
@@ -130,6 +132,35 @@ def get_file_classification(
         raise HTTPException(
             status_code=404, detail=f"No classification found for file_id={file_id}"
         )
+    return ClassificationRead.model_validate(classification)
+
+
+@router.patch("/files/{file_id}/classification", response_model=ClassificationRead)
+def override_file_classification(
+    file_id: int,
+    request: ClassificationOverrideRequest,
+    session: Session = Depends(get_session_dependency),
+) -> ClassificationRead:
+    """Manually set a file's effective routing group (README §15.3)."""
+    if request.routing_group not in ROUTING_GROUPS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid routing group {request.routing_group!r}. "
+            f"Must be one of: {ROUTING_GROUPS}",
+        )
+
+    repository = ClassificationRepository(session)
+    classification = repository.get_by_media_file_id(file_id)
+    if classification is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No classification found for file_id={file_id}. Run classify first.",
+        )
+
+    classification.manual_routing_group = request.routing_group
+    classification.effective_routing_group = request.routing_group
+    classification.override_timestamp = datetime.now(UTC)
+    repository.update(classification)
     return ClassificationRead.model_validate(classification)
 
 

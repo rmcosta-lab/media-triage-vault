@@ -66,6 +66,19 @@ uv run mypy backend
 uv run media-organizer --help
 ```
 
+Frontend dependencies here move fast enough that installed major versions
+can differ from what you already know — check each package's own bundled
+docs before writing against it: `frontend/AGENTS.md`/`CLAUDE.md` point at
+Next.js's `node_modules/next/dist/docs/`, and TanStack Table similarly
+ships `node_modules/@tanstack/*/skills/*/SKILL.md` (the installed v9 API
+— `useTable`/`tableFeatures`/`table.FlexRender` — is a hard break from
+the commonly-known v8 `useReactTable`/`flexRender`, see
+`specs/tech-stack.md` "Frontend"). A data-fetch-on-mount `useEffect`
+must call `setState` only inside an async callback's `.then()`/`.catch()`
+(guarded by a `cancelled` flag), never synchronously in the effect body
+itself — `eslint-plugin-react-hooks`'s `set-state-in-effect` rule catches
+this; see `frontend/app/review/review-dashboard.tsx` for the pattern.
+
 Frontend (inside `frontend/`, from Phase 20 onwards) uses `pnpm`:
 `pnpm dev`, `pnpm build`, `pnpm lint` (no test runner configured yet —
 add one only when a phase actually needs it). Requires the backend

@@ -46,7 +46,7 @@ Guiding rule: **the engine is read-only until Phase 14.** No code that moves, re
 ## Stage G — UI (README Fase 5)
 
 - [x] **Phase 20 — Frontend scaffold + dashboard.** Next.js + TypeScript + pnpm; scan launch form (path field, backend-validated), progress view via SSE, group totals dashboard. *Done when a scan can be started and watched from the browser.*
-- [ ] **Phase 21 — Review UI.** TanStack Table inventory with filters (group, confidence, errors, country), thumbnails, metadata + classification reasons panel, manual override editing. *Done when an override made in the UI persists and is marked manual.*
+- [x] **Phase 21 — Review UI.** TanStack Table inventory with filters (group, confidence, errors, country), thumbnails, metadata + classification reasons panel, manual override editing. *Done when an override made in the UI persists and is marked manual.*
 - [ ] **Phase 22 — Destinations, dry run, execution UI.** Destination mapping form, plan summary with conflicts/alerts, explicit confirmation, execution progress, final move report. *Done when the whole MVP flow completes from the browser — this closes README §31.*
 
 ## Horizon (post-MVP, order tentative)
