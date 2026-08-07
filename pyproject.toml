@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Local, offline media triage and organization tool."
 readme = "README_media_triage_vault.md"
 requires-python = ">=3.13,<3.14"
-dependencies = []
+dependencies = [
+    "pillow>=11.0.0",
+    "pillow-heif>=0.21.0",
+]
 
 [dependency-groups]
 dev = [
@@ -44,6 +47,10 @@ quote-style = "double"
 python_version = "3.13"
 strict = true
 files = ["backend"]
+
+[[tool.mypy.overrides]]
+module = "pillow_heif"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
