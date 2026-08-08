@@ -17,3 +17,11 @@ class JobRepository(Repository[Job]):
             select(Job).where(Job.scan_id == scan_id).where(Job.status.in_(("queued", "running")))  # type: ignore[attr-defined]
         )
         return self._session.exec(statement).all()
+
+    def list_active_for_move_plan(self, move_plan_id: int) -> Sequence[Job]:
+        statement = (
+            select(Job)
+            .where(Job.move_plan_id == move_plan_id)
+            .where(Job.status.in_(("queued", "running")))  # type: ignore[attr-defined]
+        )
+        return self._session.exec(statement).all()

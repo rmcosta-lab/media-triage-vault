@@ -105,7 +105,7 @@ def test_full_us001_to_us004_flow_over_http(client: TestClient, tmp_path: Path) 
 
     # US-003: destinations + move-plan
     dest_root = tmp_path / "dest"
-    mapping = {group: {"destination_root": str(dest_root / group)} for group in ROUTING_GROUPS}
+    mapping = {group: {"destination_root": str(dest_root)} for group in ROUTING_GROUPS}
     destinations_response = client.put(f"/api/scans/{scan_id}/destinations", json=mapping)
     assert destinations_response.status_code == 200
 
@@ -134,6 +134,7 @@ def test_full_us001_to_us004_flow_over_http(client: TestClient, tmp_path: Path) 
             continue
         destination = Path(operation["actual_destination_path"])
         assert destination.exists()
+        assert destination.parent.name in ROUTING_GROUPS
         source_name = Path(operation["source_path"]).name
         assert _sha256(destination) == source_hashes[source_name]
         assert not Path(operation["source_path"]).exists()

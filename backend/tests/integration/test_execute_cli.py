@@ -56,9 +56,7 @@ def _run_full_pipeline(source: Path, output: Path, database: Path, dest_root: Pa
 
     config_path = output / "destinations.json"
     config_path.write_text(
-        json.dumps(
-            {group: {"destination_root": str(dest_root / group)} for group in ROUTING_GROUPS}
-        ),
+        json.dumps({group: {"destination_root": str(dest_root)} for group in ROUTING_GROUPS}),
         encoding="utf-8",
     )
     destinations_result = runner.invoke(

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createColumnHelper, tableFeatures, useTable } from "@tanstack/react-table";
 import styles from "./review.module.css";
 import {
@@ -36,20 +36,38 @@ const columnHelper = createColumnHelper<typeof tableFeatureSet, ScanReportFile>(
 
 export default function ReviewDashboard() {
   const searchParams = useSearchParams();
-  const scanId = Number(searchParams.get("scanId"));
-
-  const invalidScanId = !Number.isFinite(scanId);
+  const rawScanId = searchParams.get("scanId");
+  const scanId = Number(rawScanId);
+  const invalidScanId =
+    rawScanId === null ||
+    rawScanId.trim() === "" ||
+    !Number.isSafeInteger(scanId) ||
+    scanId <= 0;
 
   const [report, setReport] = useState<ScanReport | null>(null);
+  const [reportScanId, setReportScanId] = useState<number | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [fetchErrorScanId, setFetchErrorScanId] = useState<number | null>(null);
   const [refetchToken, setRefetchToken] = useState(0);
+  const [slowScanId, setSlowScanId] = useState<number | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
   const [overrideError, setOverrideError] = useState<string | null>(null);
+  const [savingOverride, setSavingOverride] = useState(false);
 
   const [groupFilter, setGroupFilter] = useState("all");
   const [confidenceFilter, setConfidenceFilter] = useState<ConfidenceBand>("all");
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [countryFilter, setCountryFilter] = useState("all");
+  const mountedRef = useRef(true);
+  const currentScanIdRef = useRef(scanId);
+  const overridePendingRef = useRef(false);
+
+  const activeReport = reportScanId === scanId ? report : null;
+  const activeFetchError = fetchErrorScanId === scanId ? fetchError : null;
+
+  useLayoutEffect(() => {
+    currentScanIdRef.current = scanId;
+  }, [scanId]);
 
   // Effect fetches on mount and whenever scanId/refetchToken changes; setState
   // only ever happens inside the .then()/.catch() callbacks, guarded by
@@ -57,26 +75,45 @@ export default function ReviewDashboard() {
   useEffect(() => {
     if (invalidScanId) return;
     let cancelled = false;
+    const slowTimer = setTimeout(() => {
+      if (!cancelled) setSlowScanId(scanId);
+    }, 5_000);
     getScanReport(scanId)
       .then((data) => {
         if (!cancelled) {
+          clearTimeout(slowTimer);
           setReport(data);
+          setReportScanId(scanId);
           setFetchError(null);
+          setFetchErrorScanId(null);
+          setSlowScanId(null);
+          setSelectedFileId(null);
         }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
+          clearTimeout(slowTimer);
           setFetchError(err instanceof ApiError ? err.message : "Could not load the scan report.");
+          setFetchErrorScanId(scanId);
+          setSlowScanId(null);
         }
       });
     return () => {
       cancelled = true;
+      clearTimeout(slowTimer);
     };
   }, [scanId, invalidScanId, refetchToken]);
 
-  const error = invalidScanId ? "No scanId provided in the URL." : fetchError;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-  const files = useMemo(() => report?.files ?? [], [report]);
+  const error = invalidScanId ? "No scanId provided in the URL." : activeFetchError;
+
+  const files = useMemo(() => activeReport?.files ?? [], [activeReport]);
 
   const groups = useMemo(
     () => Array.from(new Set(files.map((file) => file.routing_group))).sort(),
@@ -162,16 +199,34 @@ export default function ReviewDashboard() {
   const selectedFile = files.find((file) => file.media_file_id === selectedFileId) ?? null;
 
   async function handleOverride(routingGroup: string) {
-    if (!selectedFile) return;
+    if (!selectedFile || reportScanId !== scanId || overridePendingRef.current) return;
+    overridePendingRef.current = true;
     setOverrideError(null);
+    setSavingOverride(true);
     try {
       await overrideClassification(selectedFile.media_file_id, routingGroup);
-      setRefetchToken((token) => token + 1);
+      const refreshedReport = await getScanReport(scanId);
+      if (!mountedRef.current || currentScanIdRef.current !== scanId) return;
+      setReport(refreshedReport);
+      setReportScanId(scanId);
     } catch (err) {
+      if (!mountedRef.current || currentScanIdRef.current !== scanId) return;
       setOverrideError(
         err instanceof ApiError ? err.message : "Could not save the override.",
       );
+    } finally {
+      overridePendingRef.current = false;
+      if (mountedRef.current) setSavingOverride(false);
     }
+  }
+
+  function retryLoad() {
+    setFetchError(null);
+    setFetchErrorScanId(null);
+    setReport(null);
+    setReportScanId(null);
+    setSlowScanId(null);
+    setRefetchToken((token) => token + 1);
   }
 
   if (error) {
@@ -180,14 +235,22 @@ export default function ReviewDashboard() {
         <p className={styles.error} role="alert">
           {error}
         </p>
+        {!invalidScanId && (
+          <button type="button" onClick={retryLoad}>
+            Retry
+          </button>
+        )}
       </main>
     );
   }
 
-  if (!report) {
+  if (!activeReport) {
     return (
       <main className={styles.page}>
         <p>Loading scan report…</p>
+        {slowScanId === scanId && (
+          <p role="status">The local backend is busy; still waiting for the report…</p>
+        )}
       </main>
     );
   }
@@ -200,7 +263,10 @@ export default function ReviewDashboard() {
       <div className={styles.filters}>
         <label>
           Group
-          <select value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}>
+          <select
+            value={groupFilter}
+            onChange={(event) => setGroupFilter(event.target.value)}
+          >
             <option value="all">All</option>
             {groups.map((group) => (
               <option key={group} value={group}>
@@ -213,7 +279,9 @@ export default function ReviewDashboard() {
           Confidence
           <select
             value={confidenceFilter}
-            onChange={(event) => setConfidenceFilter(event.target.value as ConfidenceBand)}
+            onChange={(event) =>
+              setConfidenceFilter(event.target.value as ConfidenceBand)
+            }
           >
             <option value="all">All</option>
             <option value="high">High (≥85%)</option>
@@ -244,6 +312,10 @@ export default function ReviewDashboard() {
           Errors only
         </label>
       </div>
+
+      <p className={styles.resultsSummary} role="status" aria-live="polite">
+        Showing {filteredFiles.length} of {files.length} files. Filters cover the complete scan.
+      </p>
 
       <div className={styles.layout}>
         <table className={styles.table}>
@@ -286,6 +358,7 @@ export default function ReviewDashboard() {
               <select
                 value={selectedFile.routing_group}
                 onChange={(event) => void handleOverride(event.target.value)}
+                disabled={savingOverride}
               >
                 {ROUTING_GROUPS.map((group) => (
                   <option key={group} value={group}>
@@ -299,6 +372,7 @@ export default function ReviewDashboard() {
                 {overrideError}
               </p>
             )}
+            {savingOverride && <p role="status">Saving override…</p>}
 
             <dl className={styles.detailList}>
               <div>

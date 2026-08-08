@@ -31,6 +31,10 @@ class UnsupportedPlatformError(RuntimeError):
 class ToolNotAvailableError(RuntimeError):
     """Raised when a tool cannot be resolved to an executable path."""
 
+    def __init__(self, tool: ToolName, message: str) -> None:
+        self.tool = tool
+        super().__init__(message)
+
 
 def detect_platform_key() -> PlatformKey:
     """Map the running OS/architecture to a ``tools/<name>/<platform>/`` directory name."""
@@ -56,12 +60,15 @@ def resolve_tool(name: ToolName) -> Path:
 
 
 def _resolve_vendored(name: ToolName) -> Path:
-    platform_key = detect_platform_key()
+    try:
+        platform_key = detect_platform_key()
+    except UnsupportedPlatformError as error:
+        raise ToolNotAvailableError(name, str(error)) from error
     suffix = ".exe" if platform_key == "windows-x64" else ""
     path = _REPO_ROOT / "tools" / name / platform_key / f"{name}{suffix}"
     if not path.is_file():
         raise ToolNotAvailableError(
-            f"{name} is not vendored for {platform_key} (expected at {path})"
+            name, f"{name} is not vendored for {platform_key} (expected at {path})"
         )
     return path
 
@@ -70,10 +77,19 @@ def _resolve_system(name: ToolName) -> Path:
     found = shutil.which(name)
     if found is None:
         raise ToolNotAvailableError(
-            f"{name} was not found on PATH. Install it (e.g. "
-            f"`winget install Gyan.FFmpeg`) or vendor it under tools/{name}/<platform>/."
+            name,
+            f"{name} was not found on PATH. Install FFmpeg locally "
+            "(for example, `winget install Gyan.FFmpeg` on Windows), then "
+            "restart the application process (and terminal, if applicable) "
+            "so it inherits the updated PATH.",
         )
     return Path(found)
+
+
+def require_tools(*names: ToolName) -> None:
+    """Fail before a pipeline starts if any required local tool is unavailable."""
+    for name in names:
+        resolve_tool(name)
 
 
 def run_tool(

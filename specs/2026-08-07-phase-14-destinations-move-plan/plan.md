@@ -84,7 +84,8 @@
     `error_message: str` (internal, folded into `MoveOperation` before
     returning).
   - `_build_destination_path(media_file, classification, rule) -> str`:
-    `Path(rule.destination_root)`, append
+    `Path(rule.destination_root)`, append the sanitized
+    `classification.effective_routing_group`, then append
     `sanitize_path_component(classification.country_name or
     classification.country_code or "unknown")` when
     `rule.country_subfolder_enabled`, append `media_file.file_name`;
@@ -183,7 +184,8 @@
 - `backend/tests/unit/test_move_plan_service.py` (temp-directory fixtures,
   synthetic `MediaFile`/`Classification` rows, no real scan needed):
   - Happy path: one file, one mapped group, no collisions →
-    `status="planned"`, correct `planned_destination_path`.
+    `status="planned"`, correct `planned_destination_path` including the
+    sanitized routing-group subfolder.
   - **Case-only collision**: a real file pre-created at the
     case-differing destination path → `status="blocked"`,
     `error_code="NAME_COLLISION"`.
@@ -202,7 +204,8 @@
   - `shutil.disk_usage` monkeypatched to return near-zero free space →
     `INSUFFICIENT_DISK_SPACE`.
   - `country_subfolder_enabled=True` → destination path includes the
-    sanitized country segment; `False` → flat under `destination_root`.
+    sanitized country segment after the group; `False` → file is directly
+    under `destination_root / sanitized routing_group`.
   - A file whose group has no enabled `DestinationRule` → excluded,
     counted in `unmapped`.
   - A file with no `Classification` row → excluded, counted in

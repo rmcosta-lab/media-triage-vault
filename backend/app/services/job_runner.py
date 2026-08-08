@@ -14,16 +14,21 @@ from __future__ import annotations
 import json
 import queue
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import Engine
 from sqlmodel import Session
 
+from backend.app.core.tools import ToolNotAvailableError, require_tools
 from backend.app.models.job import Job
 from backend.app.models.move_plan import MoveOperation
 from backend.app.models.scan import Scan
 from backend.app.repositories.job_repository import JobRepository
+from backend.app.repositories.media_file_repository import MediaFileRepository
+from backend.app.repositories.move_operation_repository import MoveOperationRepository
+from backend.app.repositories.scan_repository import ScanRepository
 from backend.app.services.classification import classify_scan
 from backend.app.services.media_type import detect_media_types_for_scan
 from backend.app.services.metadata import extract_metadata_for_scan
@@ -38,6 +43,30 @@ from backend.app.services.scanner import ScanProgress, scan_folder
 _job_queue: queue.Queue[tuple[Engine, int]] = queue.Queue()
 _worker_lock = threading.Lock()
 _worker_started = False
+_PROGRESS_WRITE_INTERVAL_SECONDS = 0.25
+
+
+class _ProgressWriter:
+    """Coalesce rapid per-file updates to avoid a second SQLite write per file."""
+
+    def __init__(self, engine: Engine, job_id: int) -> None:
+        self._engine = engine
+        self._job_id = job_id
+        self._last_write: float | None = None
+        self._pending: dict[str, object] = {}
+
+    def update(self, **fields: object) -> None:
+        self._pending.update(fields)
+        now = time.monotonic()
+        if self._last_write is None or now - self._last_write >= _PROGRESS_WRITE_INTERVAL_SECONDS:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._pending:
+            return
+        _update_job(self._engine, self._job_id, **self._pending)
+        self._pending.clear()
+        self._last_write = time.monotonic()
 
 
 def _should_cancel(engine: Engine, job_id: int) -> bool:
@@ -57,14 +86,41 @@ def _update_job(engine: Engine, job_id: int, **fields: object) -> None:
         repository.update(job)
 
 
+def _mark_linked_scan_failed(engine: Engine, job_id: int) -> None:
+    """Keep a partially built scan from being treated as classifiable."""
+    with Session(engine) as session:
+        job = JobRepository(session).get(job_id)
+        if job is None or job.job_type != "scan" or job.scan_id is None:
+            return
+        _set_scan_status(session, job.scan_id, "failed")
+
+
+def _set_scan_status(session: Session, scan_id: int, status: str) -> None:
+    scan_repository = ScanRepository(session)
+    scan = scan_repository.get(scan_id)
+    if scan is None:
+        return
+    scan.status = status
+    scan.finished_at = datetime.now(UTC)
+    scan_repository.update(scan)
+
+
 def _run_scan_job(engine: Engine, job_id: int, params: dict[str, object]) -> None:
-    _update_job(engine, job_id, status="running", started_at=datetime.now(UTC))
+    _update_job(
+        engine,
+        job_id,
+        status="running",
+        message="checking local tools",
+        started_at=datetime.now(UTC),
+    )
+    require_tools("exiftool", "ffprobe")
+    progress = _ProgressWriter(engine, job_id)
 
     def on_scan_created(scan: Scan) -> None:
         _update_job(engine, job_id, scan_id=scan.id)
 
     def on_scan_progress(progress: ScanProgress) -> None:
-        _update_job(engine, job_id, processed=progress.processed_files)
+        _update_job(engine, job_id, processed=progress.processed_files, message="scanning")
 
     with Session(engine) as session:
         scan = scan_folder(
@@ -77,46 +133,84 @@ def _run_scan_job(engine: Engine, job_id: int, params: dict[str, object]) -> Non
         )
         assert scan.id is not None
         scan_id = scan.id
+        progress.flush()
+        _update_job(engine, job_id, total=scan.total_files, processed=scan.processed_files)
 
         if scan.status == "cancelled":
             _update_job(
-                engine, job_id, status="cancelled", scan_id=scan_id, finished_at=datetime.now(UTC)
+                engine,
+                job_id,
+                status="cancelled",
+                scan_id=scan_id,
+                message=None,
+                finished_at=datetime.now(UTC),
             )
             return
 
         detect_media_types_for_scan(
             session,
             scan_id,
-            on_progress=lambda n: _update_job(engine, job_id, message=f"detecting ({n})"),
+            on_progress=lambda n: progress.update(message=f"detecting ({n})"),
             should_cancel=lambda: _should_cancel(engine, job_id),
         )
+        progress.flush()
         if _should_cancel(engine, job_id):
+            _set_scan_status(session, scan_id, "cancelled")
             _update_job(
-                engine, job_id, status="cancelled", scan_id=scan_id, finished_at=datetime.now(UTC)
+                engine,
+                job_id,
+                status="cancelled",
+                scan_id=scan_id,
+                message=None,
+                finished_at=datetime.now(UTC),
             )
             return
 
         extract_metadata_for_scan(
             session,
             scan_id,
-            on_progress=lambda n: _update_job(engine, job_id, message=f"extracting ({n})"),
+            on_progress=lambda n: progress.update(message=f"extracting ({n})"),
             should_cancel=lambda: _should_cancel(engine, job_id),
         )
+        progress.flush()
 
     final_status = "cancelled" if _should_cancel(engine, job_id) else "completed"
-    _update_job(engine, job_id, status=final_status, scan_id=scan_id, finished_at=datetime.now(UTC))
+    if final_status == "cancelled":
+        with Session(engine) as session:
+            _set_scan_status(session, scan_id, "cancelled")
+    _update_job(
+        engine,
+        job_id,
+        status=final_status,
+        scan_id=scan_id,
+        message=None,
+        finished_at=datetime.now(UTC),
+    )
 
 
 def _run_classify_job(engine: Engine, job_id: int, params: dict[str, object]) -> None:
     scan_id = int(str(params["scan_id"]))
-    _update_job(engine, job_id, status="running", scan_id=scan_id, started_at=datetime.now(UTC))
+    with Session(engine) as session:
+        total = sum(
+            row.media_kind in ("image", "video")
+            for row in MediaFileRepository(session).list_by_scan(scan_id)
+        )
+    _update_job(
+        engine,
+        job_id,
+        status="running",
+        scan_id=scan_id,
+        total=total,
+        started_at=datetime.now(UTC),
+    )
 
     processed_count = 0
+    progress = _ProgressWriter(engine, job_id)
 
     def _on_progress(_media: object, _result: object) -> None:
         nonlocal processed_count
         processed_count += 1
-        _update_job(engine, job_id, processed=processed_count)
+        progress.update(processed=processed_count)
 
     with Session(engine) as session:
         classify_scan(
@@ -125,23 +219,44 @@ def _run_classify_job(engine: Engine, job_id: int, params: dict[str, object]) ->
             on_progress=_on_progress,
             should_cancel=lambda: _should_cancel(engine, job_id),
         )
+    progress.flush()
 
     final_status = "cancelled" if _should_cancel(engine, job_id) else "completed"
-    _update_job(engine, job_id, status=final_status, finished_at=datetime.now(UTC))
+    _update_job(
+        engine,
+        job_id,
+        status=final_status,
+        processed=processed_count,
+        message=None,
+        finished_at=datetime.now(UTC),
+    )
 
 
 def _run_execute_job(engine: Engine, job_id: int, params: dict[str, object]) -> None:
     move_plan_id = int(str(params["move_plan_id"]))
+    with Session(engine) as session:
+        operations = MoveOperationRepository(session).list_by_plan(move_plan_id)
+        total = sum(operation.status != "blocked" for operation in operations)
+        processed_count = sum(
+            operation.status in ("completed", "failed", "skipped", "cancelled")
+            for operation in operations
+        )
     _update_job(
-        engine, job_id, status="running", move_plan_id=move_plan_id, started_at=datetime.now(UTC)
+        engine,
+        job_id,
+        status="running",
+        move_plan_id=move_plan_id,
+        total=total,
+        processed=processed_count,
+        started_at=datetime.now(UTC),
     )
 
-    processed_count = 0
+    progress = _ProgressWriter(engine, job_id)
 
     def _on_progress(_operation: MoveOperation) -> None:
         nonlocal processed_count
         processed_count += 1
-        _update_job(engine, job_id, processed=processed_count)
+        progress.update(processed=processed_count)
 
     with Session(engine) as session:
         execute_move_plan(
@@ -150,9 +265,21 @@ def _run_execute_job(engine: Engine, job_id: int, params: dict[str, object]) -> 
             on_progress=_on_progress,
             should_cancel=lambda: _should_cancel(engine, job_id),
         )
+        processed_count = sum(
+            operation.status in ("completed", "failed", "skipped", "cancelled")
+            for operation in MoveOperationRepository(session).list_by_plan(move_plan_id)
+        )
+    progress.flush()
 
     final_status = "cancelled" if _should_cancel(engine, job_id) else "completed"
-    _update_job(engine, job_id, status=final_status, finished_at=datetime.now(UTC))
+    _update_job(
+        engine,
+        job_id,
+        status=final_status,
+        processed=processed_count,
+        message=None,
+        finished_at=datetime.now(UTC),
+    )
 
 
 def _worker_loop() -> None:
@@ -172,13 +299,26 @@ def _worker_loop() -> None:
                 _run_classify_job(engine, job_id, params)
             elif job_type == "execute":
                 _run_execute_job(engine, job_id, params)
+        except ToolNotAvailableError as error:
+            _mark_linked_scan_failed(engine, job_id)
+            _update_job(
+                engine,
+                job_id,
+                status="failed",
+                error_code="TOOL_NOT_AVAILABLE",
+                error_message=str(error),
+                message=None,
+                finished_at=datetime.now(UTC),
+            )
         except Exception as error:  # noqa: BLE001 - a job must never crash the worker thread
+            _mark_linked_scan_failed(engine, job_id)
             _update_job(
                 engine,
                 job_id,
                 status="failed",
                 error_code="JOB_FAILED",
                 error_message=str(error),
+                message=None,
                 finished_at=datetime.now(UTC),
             )
         finally:

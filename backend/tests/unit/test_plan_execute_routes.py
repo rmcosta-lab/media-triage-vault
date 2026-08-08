@@ -18,10 +18,18 @@ from sqlmodel import Session
 from backend.app.api.app import create_app
 from backend.app.api.deps import get_session_dependency, get_thumbnail_cache_dir_dependency
 from backend.app.core.db import create_db_and_tables, get_engine
+from backend.app.models.job import Job
+from backend.app.repositories.job_repository import JobRepository
 from backend.app.rules.engine import ROUTING_GROUPS
+from backend.app.services import job_runner as job_runner_module
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+
+
+@pytest.fixture(autouse=True)
+def _assume_required_tools_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(job_runner_module, "require_tools", lambda *_names: None)
 
 
 @pytest.fixture
@@ -70,7 +78,7 @@ def scanned_and_classified(client: TestClient, tmp_path: Path) -> tuple[int, Pat
     source = tmp_path / "source"
     source.mkdir()
     shutil.copy(FIXTURES_DIR / "iphone_jpeg_gps.jpg", source / "iphone_jpeg_gps.jpg")
-    shutil.copy(FIXTURES_DIR / "sample_video.mp4", source / "sample_video.mp4")
+    shutil.copy(FIXTURES_DIR / "jpeg_no_exif.jpg", source / "jpeg_no_exif.jpg")
 
     scan_response = client.post("/api/scans", json={"source_root": str(source)})
     scan_job = _wait_for_terminal(client, f"/api/jobs/{scan_response.json()['id']}")
@@ -86,7 +94,7 @@ def test_put_destinations_happy_path(
     client: TestClient, scanned_and_classified: tuple[int, Path]
 ) -> None:
     scan_id, dest_root = scanned_and_classified
-    mapping = {group: {"destination_root": str(dest_root / group)} for group in ROUTING_GROUPS}
+    mapping = {group: {"destination_root": str(dest_root)} for group in ROUTING_GROUPS}
 
     response = client.put(f"/api/scans/{scan_id}/destinations", json=mapping)
 
@@ -118,7 +126,7 @@ def test_move_plan_happy_path_and_missing_scan(
     client: TestClient, scanned_and_classified: tuple[int, Path]
 ) -> None:
     scan_id, dest_root = scanned_and_classified
-    mapping = {group: {"destination_root": str(dest_root / group)} for group in ROUTING_GROUPS}
+    mapping = {group: {"destination_root": str(dest_root)} for group in ROUTING_GROUPS}
     client.put(f"/api/scans/{scan_id}/destinations", json=mapping)
 
     response = client.post(f"/api/scans/{scan_id}/move-plan", json={})
@@ -127,6 +135,10 @@ def test_move_plan_happy_path_and_missing_scan(
     body = response.json()
     assert body["total_planned"] >= 1
     assert len(body["operations"]) >= 1
+    assert all(
+        Path(operation["planned_destination_path"]).parent.name in ROUTING_GROUPS
+        for operation in body["operations"]
+    )
 
     missing = client.post("/api/scans/999/move-plan", json={})
     assert missing.status_code == 404
@@ -141,7 +153,7 @@ def test_execute_requires_approval(
     client: TestClient, scanned_and_classified: tuple[int, Path]
 ) -> None:
     scan_id, dest_root = scanned_and_classified
-    mapping = {group: {"destination_root": str(dest_root / group)} for group in ROUTING_GROUPS}
+    mapping = {group: {"destination_root": str(dest_root)} for group in ROUTING_GROUPS}
     client.put(f"/api/scans/{scan_id}/destinations", json=mapping)
     plan = client.post(f"/api/scans/{scan_id}/move-plan", json={}).json()
 
@@ -156,11 +168,38 @@ def test_execute_requires_approval(
     assert execute_response.status_code == 202
 
 
+def test_execute_rejects_a_second_active_job(
+    client: TestClient,
+    engine: Engine,
+    scanned_and_classified: tuple[int, Path],
+) -> None:
+    scan_id, dest_root = scanned_and_classified
+    mapping = {group: {"destination_root": str(dest_root)} for group in ROUTING_GROUPS}
+    client.put(f"/api/scans/{scan_id}/destinations", json=mapping)
+    plan = client.post(f"/api/scans/{scan_id}/move-plan", json={}).json()
+    client.post(f"/api/move-plans/{plan['id']}/approve")
+
+    with Session(engine) as session:
+        JobRepository(session).create(
+            Job(
+                job_type="execute",
+                move_plan_id=plan["id"],
+                status="running",
+                params_json="{}",
+            )
+        )
+
+    response = client.post(f"/api/move-plans/{plan['id']}/execute")
+
+    assert response.status_code == 409
+    assert "already has an active execution" in response.json()["detail"]
+
+
 def test_full_execute_flow_moves_a_real_file(
     client: TestClient, scanned_and_classified: tuple[int, Path]
 ) -> None:
     scan_id, dest_root = scanned_and_classified
-    mapping = {group: {"destination_root": str(dest_root / group)} for group in ROUTING_GROUPS}
+    mapping = {group: {"destination_root": str(dest_root)} for group in ROUTING_GROUPS}
     client.put(f"/api/scans/{scan_id}/destinations", json=mapping)
     plan = client.post(f"/api/scans/{scan_id}/move-plan", json={}).json()
     client.post(f"/api/move-plans/{plan['id']}/approve")

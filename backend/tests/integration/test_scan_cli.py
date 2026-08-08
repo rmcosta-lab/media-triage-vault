@@ -9,9 +9,12 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
+from backend.app.cli import main as cli_main
 from backend.app.cli.main import app
+from backend.app.core.tools import ToolNotAvailableError
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -91,3 +94,27 @@ def test_scan_command_nonexistent_path_exits_nonzero(tmp_path: Path) -> None:
     )
     assert result.exit_code != 0
     assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_scan_command_missing_tool_fails_before_creating_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    output = tmp_path / "out"
+    database = tmp_path / "test.db"
+
+    def _missing_tool(*_names: str) -> None:
+        raise ToolNotAvailableError("ffprobe", "ffprobe is unavailable")
+
+    monkeypatch.setattr(cli_main, "require_tools", _missing_tool)
+
+    result = runner.invoke(
+        app,
+        ["scan", str(source), "--output", str(output), "--database", str(database)],
+    )
+
+    assert result.exit_code == 1
+    assert "Required local tool unavailable: ffprobe is unavailable" in result.output
+    assert not output.exists()
+    assert not database.exists()

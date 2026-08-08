@@ -18,6 +18,13 @@ class Repository[T: SQLModel]:
         self._session.refresh(obj)
         return obj
 
+    def save_many(self, objects: Sequence[T]) -> None:
+        """Persist one service-level batch in a single transaction."""
+        if not objects:
+            return
+        self._session.add_all(objects)
+        self._session.commit()
+
     def get(self, id_: int) -> T | None:
         return self._session.get(self._model, id_)
 

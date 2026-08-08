@@ -89,18 +89,28 @@ def _build_rows(
 ) -> list[ReportRow]:
     metadata_repository = MediaMetadataRepository(session)
     classification_repository = ClassificationRepository(session)
+    scan_ids = {media.scan_id for media in media_files}
+    if len(scan_ids) > 1:
+        raise ValueError("Report rows must all belong to the same scan")
+    scan_id = next(iter(scan_ids), None)
+    metadata_items = metadata_repository.list_by_scan(scan_id) if scan_id is not None else []
+    classification_items = (
+        classification_repository.list_by_scan(scan_id) if scan_id is not None else []
+    )
+    metadata_by_file_id = {item.media_file_id: item for item in metadata_items}
+    classification_by_file_id = {item.media_file_id: item for item in classification_items}
     rows: list[ReportRow] = []
 
     for media in media_files:
         if media.id is None:
             continue
 
-        metadata = metadata_repository.get_by_media_file_id(media.id)
+        metadata = metadata_by_file_id.get(media.id)
         metadata_fields: dict[str, Any] = (
             _media_metadata_to_dict(metadata) if metadata is not None else {}
         )
 
-        classification = classification_repository.get_by_media_file_id(media.id)
+        classification = classification_by_file_id.get(media.id)
 
         thumbnail_result = thumbnail_results.get(media.id)
         thumbnail_path = (

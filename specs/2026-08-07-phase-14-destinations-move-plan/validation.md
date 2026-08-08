@@ -19,6 +19,10 @@
       `MoveOperation` row carries `source_path` and
       `planned_destination_path` — asserted in the integration test and
       visible in the manual `plan` run output.
+- [x] Every planned destination includes the sanitized routing group between
+      the configured root and the optional country subfolder — asserted by
+      `test_happy_path_one_file_one_mapped_group`, the country-subfolder tests,
+      and the CLI/API integration tests.
 - [x] The plan computes total volume — `MovePlanSummary.total_bytes_planned`
       (manual run: `total_bytes_planned=7012`).
 - [x] A dry run is generated — `MovePlan`/`MoveOperation` rows persisted —
@@ -61,7 +65,8 @@
       (the check runs and returns `True` for a normal temp directory) —
       `test_move_plan_service.py`, 14 tests.
 - [x] Country-subfolder path construction tested both enabled and
-      disabled — `test_country_subfolder_enabled_adds_segment`,
+      disabled, always after the routing-group segment —
+      `test_country_subfolder_enabled_adds_segment`,
       `test_country_subfolder_disabled_is_flat`.
 - [x] Files with an unmapped group and files with no `Classification` row
       are excluded from the plan and counted correctly —

@@ -11,6 +11,7 @@ from sqlalchemy import Engine
 from sqlmodel import Session
 
 from backend.app.core.db import create_db_and_tables, get_engine
+from backend.app.core.tools import ToolNotAvailableError
 from backend.app.models.job import Job
 from backend.app.repositories.job_repository import JobRepository
 from backend.app.repositories.scan_repository import ScanRepository
@@ -19,6 +20,11 @@ from backend.app.services.job_runner import submit_classify_job, submit_scan_job
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+
+
+@pytest.fixture(autouse=True)
+def _assume_required_tools_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(job_runner_module, "require_tools", lambda *_names: None)
 
 
 @pytest.fixture
@@ -47,7 +53,7 @@ def _copy_fixtures(destination: Path, names: tuple[str, ...]) -> None:
 
 def test_scan_job_completes_and_stamps_scan_id(engine: Engine, tmp_path: Path) -> None:
     source = tmp_path / "source"
-    _copy_fixtures(source, ("iphone_jpeg_gps.jpg", "sample_video.mp4"))
+    _copy_fixtures(source, ("iphone_jpeg_gps.jpg", "jpeg_no_exif.jpg"))
 
     with Session(engine) as session:
         job = submit_scan_job(session, str(source), True)
@@ -93,7 +99,7 @@ def test_cancellation_stops_classify_before_any_file(engine: Engine, tmp_path: P
     deterministic regardless of how many files exist.
     """
     source = tmp_path / "source"
-    _copy_fixtures(source, ("iphone_jpeg_gps.jpg", "sample_video.mp4"))
+    _copy_fixtures(source, ("iphone_jpeg_gps.jpg", "jpeg_no_exif.jpg"))
 
     with Session(engine) as session:
         scan_job = submit_scan_job(session, str(source), True)
@@ -145,3 +151,85 @@ def test_job_failure_marks_status_failed(
     assert finished.status == "failed"
     assert finished.error_code == "JOB_FAILED"
     assert finished.error_message is not None and "boom" in finished.error_message
+
+
+def test_pipeline_failure_marks_linked_scan_failed(
+    engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    _copy_fixtures(source, ("iphone_jpeg_gps.jpg",))
+
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("metadata boom")
+
+    monkeypatch.setattr(job_runner_module, "extract_metadata_for_scan", _raise)
+    with Session(engine) as session:
+        job = submit_scan_job(session, str(source), True)
+        job_id = job.id
+    assert job_id is not None
+
+    finished = _wait_for_terminal(engine, job_id)
+
+    assert finished.status == "failed"
+    assert finished.scan_id is not None
+    with Session(engine) as session:
+        scan = ScanRepository(session).get(finished.scan_id)
+        assert scan is not None
+        assert scan.status == "failed"
+
+
+def test_missing_tool_fails_before_scan_is_created(
+    engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scan_called = False
+
+    def _missing_tool(*_names: str) -> None:
+        raise ToolNotAvailableError("ffprobe", "ffprobe is unavailable")
+
+    def _unexpected_scan(*_args: object, **_kwargs: object) -> None:
+        nonlocal scan_called
+        scan_called = True
+
+    monkeypatch.setattr(job_runner_module, "require_tools", _missing_tool)
+    monkeypatch.setattr(job_runner_module, "scan_folder", _unexpected_scan)
+
+    with Session(engine) as session:
+        job = submit_scan_job(session, str(tmp_path), True)
+        job_id = job.id
+    assert job_id is not None
+
+    finished = _wait_for_terminal(engine, job_id)
+
+    assert finished.status == "failed"
+    assert finished.error_code == "TOOL_NOT_AVAILABLE"
+    assert finished.error_message == "ffprobe is unavailable"
+    assert finished.processed == 0
+    assert finished.scan_id is None
+    assert scan_called is False
+    with Session(engine) as session:
+        assert ScanRepository(session).list() == []
+
+
+def test_progress_writer_coalesces_rapid_updates(
+    engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _record_update(_engine: Engine, _job_id: int, **fields: object) -> None:
+        calls.append(fields)
+
+    monkeypatch.setattr(job_runner_module, "_update_job", _record_update)
+    clock = iter((1.0, 10.0, 10.1, 10.2, 10.3))
+    monkeypatch.setattr("backend.app.services.job_runner.time.monotonic", lambda: next(clock))
+    writer = job_runner_module._ProgressWriter(engine, 1)
+
+    writer.update(processed=1)
+    writer.update(processed=2)
+    writer.update(message="detecting (2)")
+
+    assert calls == [{"processed": 1}]
+    writer.flush()
+    assert calls == [
+        {"processed": 1},
+        {"processed": 2, "message": "detecting (2)"},
+    ]

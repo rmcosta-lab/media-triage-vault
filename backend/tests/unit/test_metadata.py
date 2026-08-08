@@ -8,13 +8,18 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from backend.app.core.tools import run_tool
+import pytest
+
+from backend.app.core.tools import ToolNotAvailableError, run_tool
+from backend.app.models.media_file import MediaFile
+from backend.app.services import metadata as metadata_module
 from backend.app.services.metadata import (
     EXIFTOOL_FIELDS,
     _build_media_metadata,
     _parse_exiftool_datetime,
     _resolve_capture_datetime,
     _run_exiftool_batch,
+    _validate_video,
 )
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
@@ -99,3 +104,27 @@ def test_run_exiftool_batch_uses_one_process_for_multiple_files() -> None:
     assert mocked.call_count == 1
     assert len(results) == len(fixtures)
     assert results[0]["Make"] == "Apple"
+
+
+def test_missing_ffprobe_propagates_without_marking_video_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media = MediaFile(
+        scan_id=1,
+        absolute_path="video.mp4",
+        relative_path="video.mp4",
+        file_name="video.mp4",
+        extension=".mp4",
+        size_bytes=1,
+        media_kind="video",
+    )
+
+    def _missing(*_args: object, **_kwargs: object) -> None:
+        raise ToolNotAvailableError("ffprobe", "ffprobe is unavailable")
+
+    monkeypatch.setattr(metadata_module, "run_tool", _missing)
+
+    with pytest.raises(ToolNotAvailableError):
+        _validate_video(media)
+    assert media.error_code is None
+    assert media.error_message is None

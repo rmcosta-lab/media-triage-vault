@@ -12,7 +12,23 @@ import { z } from "zod";
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
 
 function getBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_BASE_URL;
+  const configured = process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_BASE_URL;
+  let parsed: URL;
+  try {
+    parsed = new URL(configured);
+  } catch {
+    throw new ApiError("NEXT_PUBLIC_API_BASE_URL is not a valid URL.", 0);
+  }
+
+  const isLoopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+  const hasOnlyOrigin = parsed.pathname === "/" && parsed.search === "" && parsed.hash === "";
+  if (parsed.protocol !== "http:" || !isLoopback || !hasOnlyOrigin) {
+    throw new ApiError(
+      "NEXT_PUBLIC_API_BASE_URL must be an http://localhost or http://127.0.0.1 origin.",
+      0,
+    );
+  }
+  return parsed.origin;
 }
 
 /** The API base URL, for building a direct resource URL (e.g. an `<img src>`). */
@@ -38,6 +54,23 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
   }
+}
+
+function formatApiDetail(detail: unknown): string | null {
+  if (typeof detail === "string") return detail;
+  if (!Array.isArray(detail)) return null;
+
+  const messages = detail.flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null || !("msg" in entry)) return [];
+    const message = typeof entry.msg === "string" ? entry.msg : null;
+    if (message === null) return [];
+    const location =
+      "loc" in entry && Array.isArray(entry.loc)
+        ? entry.loc.map(String).join(".")
+        : null;
+    return [location ? `${location}: ${message}` : message];
+  });
+  return messages.length > 0 ? messages.join("; ") : null;
 }
 
 const ScanSchema = z.object({
@@ -201,23 +234,61 @@ async function requestJson<T>(
   schema: z.ZodType<T>,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(`${getBaseUrl()}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
+  const method = init?.method ?? "GET";
+  const isRead = method === "GET";
+  const controller = isRead ? new AbortController() : null;
+  const timeout = controller
+    ? setTimeout(() => controller.abort(), 30_000)
+    : null;
+  const headers = new Headers(init?.headers);
+  if (init?.body !== undefined && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
 
-  if (!response.ok) {
-    const detail = await response
-      .json()
-      .then((body: { detail?: string }) => body.detail)
-      .catch(() => null);
+  let response: Response;
+  try {
+    response = await fetch(`${getBaseUrl()}${path}`, {
+      ...init,
+      cache: isRead ? "no-store" : init?.cache,
+      headers,
+      signal: controller?.signal ?? init?.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError("The local API did not respond within 30 seconds.", 0);
+    }
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(`Could not reach the local API at ${getBaseUrl()}.`, 0);
+  } finally {
+    if (timeout !== null) clearTimeout(timeout);
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
     throw new ApiError(
-      detail ?? `Request to ${path} failed with status ${response.status}`,
+      `The local API returned invalid JSON for ${path} (status ${response.status}).`,
       response.status,
     );
   }
 
-  return schema.parse(await response.json());
+  if (!response.ok) {
+    const detail =
+      typeof body === "object" && body !== null && "detail" in body
+        ? (body as { detail?: unknown }).detail
+        : null;
+    throw new ApiError(
+      formatApiDetail(detail) ?? `Request to ${path} failed with status ${response.status}`,
+      response.status,
+    );
+  }
+
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(`The local API response for ${path} has an unexpected shape.`, 502);
+  }
+  return parsed.data;
 }
 
 export function startScan(sourceRoot: string, recursive: boolean): Promise<Job> {
@@ -291,16 +362,87 @@ export function getMoveRunReport(runId: number): Promise<MoveReport> {
   return requestJson(`/api/move-runs/${runId}/report`, MoveReportSchema);
 }
 
-/** Subscribe to a job's live progress over SSE. Returns an unsubscribe function. */
-export function subscribeJobEvents(jobId: number, onEvent: (job: Job) => void): () => void {
-  const source = new EventSource(`${getBaseUrl()}/api/jobs/${jobId}/events`);
+export type JobConnectionState = "connecting" | "connected" | "polling";
 
-  source.onmessage = (event: MessageEvent<string>) => {
-    const parsed = JobSchema.safeParse(JSON.parse(event.data));
-    if (parsed.success) {
-      onEvent(parsed.data);
+interface JobSubscriptionOptions {
+  onConnectionState?: (state: JobConnectionState) => void;
+  onError?: (message: string) => void;
+}
+
+/** Subscribe over SSE, falling back to local polling if the stream drops. */
+export function subscribeJobEvents(
+  jobId: number,
+  onEvent: (job: Job) => void,
+  options: JobSubscriptionOptions = {},
+): () => void {
+  let stopped = false;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let pollingStarted = false;
+  let pollInFlight = false;
+  const source = new EventSource(`${getBaseUrl()}/api/jobs/${jobId}/events`);
+  options.onConnectionState?.("connecting");
+
+  const schedulePoll = () => {
+    if (stopped || pollTimer !== null) return;
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      void poll();
+    }, 1_000);
+  };
+
+  const poll = async () => {
+    if (stopped || pollInFlight) return;
+    pollInFlight = true;
+    try {
+      const job = await getJob(jobId);
+      if (stopped) return;
+      onEvent(job);
+      if (!isJobTerminal(job)) schedulePoll();
+    } catch (error) {
+      if (stopped) return;
+      options.onError?.(
+        error instanceof ApiError ? error.message : "Could not refresh local job progress.",
+      );
+      schedulePoll();
+    } finally {
+      pollInFlight = false;
     }
   };
 
-  return () => source.close();
+  const startPolling = (message: string) => {
+    if (stopped || pollingStarted) return;
+    pollingStarted = true;
+    source.close();
+    options.onConnectionState?.("polling");
+    options.onError?.(message);
+    void poll();
+  };
+
+  source.onopen = () => options.onConnectionState?.("connected");
+
+  source.onmessage = (event: MessageEvent<string>) => {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      startPolling("The live progress stream returned invalid JSON; using polling.");
+      return;
+    }
+    const parsed = JobSchema.safeParse(payload);
+    if (parsed.success) {
+      onEvent(parsed.data);
+    } else {
+      startPolling("The live progress stream changed shape; using polling.");
+    }
+  };
+
+  source.onerror = () => {
+    startPolling("Live progress disconnected; status checks will continue locally.");
+  };
+
+  return () => {
+    stopped = true;
+    source.close();
+    if (pollTimer !== null) clearTimeout(pollTimer);
+  };
 }

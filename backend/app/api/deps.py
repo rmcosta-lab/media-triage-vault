@@ -11,8 +11,10 @@ repo's `runtime/` tree.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from functools import lru_cache
 from pathlib import Path
 
+from sqlalchemy import Engine
 from sqlmodel import Session
 
 from backend.app.core.db import create_db_and_tables, get_database_path, get_engine
@@ -20,10 +22,16 @@ from backend.app.core.db import create_db_and_tables, get_database_path, get_eng
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def get_session_dependency() -> Iterator[Session]:
+@lru_cache(maxsize=1)
+def get_api_engine() -> Engine:
+    """Return the process-wide API engine and initialize its schema once."""
     engine = get_engine(get_database_path())
     create_db_and_tables(engine)
-    with Session(engine) as session:
+    return engine
+
+
+def get_session_dependency() -> Iterator[Session]:
+    with Session(get_api_engine()) as session:
         yield session
 
 

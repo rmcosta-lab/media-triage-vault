@@ -72,6 +72,13 @@
   color: #e5484d;
 }
 
+.notice {
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent);
+  color: color-mix(in srgb, var(--foreground) 75%, transparent);
+}
+
 .panel {
   display: flex;
   flex-direction: column;

@@ -64,6 +64,26 @@ _CAPTURE_DATETIME_FIELDS: tuple[str, ...] = (
     "TrackCreateDate",
 )
 
+_METADATA_VALUE_FIELDS: tuple[str, ...] = (
+    "capture_datetime",
+    "make",
+    "model",
+    "software",
+    "lens_model",
+    "camera_serial_number",
+    "gps_latitude",
+    "gps_longitude",
+    "gps_position_raw",
+    "location_information",
+    "handler_description",
+    "compressor_name",
+    "encoder",
+    "rotation",
+    "profile_description",
+    "color_space",
+    "raw_json",
+)
+
 
 class MetadataBatchError(RuntimeError):
     """Raised when an ExifTool batch response doesn't match the request shape."""
@@ -180,6 +200,12 @@ def _apply_tags_to_media_file(row: MediaFile, tags: dict[str, Any]) -> None:
         row.duration_seconds = duration
 
 
+def _merge_media_metadata(target: MediaMetadata, source: MediaMetadata) -> None:
+    """Copy extracted values while preserving the existing row identity."""
+    for field_name in _METADATA_VALUE_FIELDS:
+        setattr(target, field_name, getattr(source, field_name))
+
+
 def _validate_video(row: MediaFile) -> bool:
     """Confirm a `media_kind="video"` row has a decodable video stream (README §9)."""
     result = run_tool(
@@ -232,31 +258,50 @@ def extract_metadata_for_scan(
         batch = rows[batch_start : batch_start + batch_size]
         paths = [Path(row.absolute_path) for row in batch]
         tag_results = _run_exiftool_batch(paths)
+        media_file_ids = [_require_id(row) for row in batch]
+        existing_metadata = {
+            item.media_file_id: item
+            for item in media_metadata_repository.list_by_media_file_ids(media_file_ids)
+        }
+        metadata_to_save: list[MediaMetadata] = []
 
-        for row, tags in zip(batch, tag_results, strict=True):
-            error = tags.get("Error")
-            if error is not None:
-                row.error_code = "METADATA_READ_ERROR"
-                row.error_message = str(error)
-                media_metadata_repository.create(MediaMetadata(media_file_id=_require_id(row)))
-                media_file_repository.update(row)
-                metadata_errors += 1
-            else:
-                _apply_tags_to_media_file(row, tags)
-                media_metadata_repository.create(_build_media_metadata(_require_id(row), tags))
-                media_file_repository.update(row)
-                extracted += 1
-
-            if row.media_kind == "video" and error is None:
-                if _validate_video(row):
-                    video_ok += 1
+        try:
+            for row, tags in zip(batch, tag_results, strict=True):
+                media_file_id = _require_id(row)
+                error = tags.get("Error")
+                if error is not None:
+                    row.error_code = "METADATA_READ_ERROR"
+                    row.error_message = str(error)
+                    candidate = MediaMetadata(media_file_id=media_file_id)
+                    metadata_errors += 1
                 else:
-                    video_unreadable += 1
-                media_file_repository.update(row)
+                    _apply_tags_to_media_file(row, tags)
+                    candidate = _build_media_metadata(media_file_id, tags)
+                    extracted += 1
 
-            processed += 1
-            if on_progress is not None:
-                on_progress(processed)
+                persisted = existing_metadata.get(media_file_id)
+                if persisted is None:
+                    metadata_to_save.append(candidate)
+                else:
+                    _merge_media_metadata(persisted, candidate)
+                    metadata_to_save.append(persisted)
+
+                if row.media_kind == "video" and error is None:
+                    if _validate_video(row):
+                        video_ok += 1
+                    else:
+                        video_unreadable += 1
+
+            session.add_all(batch)
+            session.add_all(metadata_to_save)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+
+        processed += len(batch)
+        if on_progress is not None:
+            on_progress(processed)
 
     return MetadataSummary(
         extracted=extracted,

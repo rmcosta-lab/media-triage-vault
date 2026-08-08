@@ -17,9 +17,20 @@ from sqlmodel import Session
 from backend.app.api.app import create_app
 from backend.app.api.deps import get_session_dependency, get_thumbnail_cache_dir_dependency
 from backend.app.core.db import create_db_and_tables, get_engine
+from backend.app.core.tools import ToolNotAvailableError
+from backend.app.models.job import Job
+from backend.app.models.scan import Scan
+from backend.app.repositories.job_repository import JobRepository
+from backend.app.repositories.scan_repository import ScanRepository
+from backend.app.services import job_runner as job_runner_module
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+
+
+@pytest.fixture(autouse=True)
+def _assume_required_tools_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(job_runner_module, "require_tools", lambda *_names: None)
 
 
 @pytest.fixture
@@ -92,6 +103,36 @@ def test_post_classify_unknown_scan_returns_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
+def test_post_classify_rejects_incomplete_scan(client: TestClient, engine: Engine) -> None:
+    with Session(engine) as session:
+        scan = ScanRepository(session).create(
+            Scan(source_root="X", recursive=True, status="running")
+        )
+        assert scan.id is not None
+
+    response = client.post(f"/api/scans/{scan.id}/classify")
+
+    assert response.status_code == 409
+    assert "must be completed" in response.json()["detail"]
+
+
+def test_post_classify_rejects_second_active_job(client: TestClient, engine: Engine) -> None:
+    with Session(engine) as session:
+        scan = ScanRepository(session).create(
+            Scan(source_root="X", recursive=True, status="completed")
+        )
+        assert scan.id is not None
+        scan_id = scan.id
+        JobRepository(session).create(
+            Job(job_type="classify", scan_id=scan_id, status="running", params_json="{}")
+        )
+
+    response = client.post(f"/api/scans/{scan_id}/classify")
+
+    assert response.status_code == 409
+    assert "already has an active job" in response.json()["detail"]
+
+
 def test_post_classify_happy_path(client: TestClient, tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
@@ -144,6 +185,35 @@ def test_job_events_stream_reaches_terminal_state(client: TestClient, tmp_path: 
 
     assert last_event is not None
     assert last_event["status"] == "completed"
+
+
+def test_job_events_stream_exposes_missing_tool_failure(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+
+    def _missing_tool(*_names: str) -> None:
+        raise ToolNotAvailableError("ffprobe", "ffprobe is unavailable")
+
+    monkeypatch.setattr(job_runner_module, "require_tools", _missing_tool)
+    scan_response = client.post("/api/scans", json={"source_root": str(source)})
+    job_id = scan_response.json()["id"]
+
+    last_event: dict[str, object] | None = None
+    with client.stream("GET", f"/api/jobs/{job_id}/events") as response:
+        for line in response.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            last_event = json.loads(line[len("data: ") :])
+            if last_event["status"] in TERMINAL_STATUSES:
+                break
+
+    assert last_event is not None
+    assert last_event["status"] == "failed"
+    assert last_event["error_code"] == "TOOL_NOT_AVAILABLE"
+    assert last_event["error_message"] == "ffprobe is unavailable"
+    assert last_event["scan_id"] is None
 
 
 def test_job_events_missing_job_returns_404(client: TestClient) -> None:

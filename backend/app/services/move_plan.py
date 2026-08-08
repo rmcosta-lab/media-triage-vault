@@ -66,7 +66,8 @@ class _PendingOp:
 def _build_destination_path(
     media_file: MediaFile, classification: Classification, rule: DestinationRule
 ) -> str:
-    destination = Path(rule.destination_root)
+    group_label = sanitize_path_component(classification.effective_routing_group)
+    destination = Path(rule.destination_root) / group_label
     if rule.country_subfolder_enabled:
         country_label = classification.country_name or classification.country_code or "unknown"
         destination = destination / sanitize_path_component(country_label)

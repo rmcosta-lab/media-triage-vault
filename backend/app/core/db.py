@@ -18,6 +18,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DATABASE_PATH = _REPO_ROOT / "runtime" / "database" / "media_organizer.db"
+_SQLITE_BUSY_TIMEOUT_SECONDS = 30.0
 
 
 def get_database_path() -> Path:
@@ -27,9 +28,22 @@ def get_database_path() -> Path:
 
 
 def get_engine(path: Path | None = None) -> Engine:
-    """Create an engine for ``path`` (defaults to the standard database path)."""
+    """Create a WAL-enabled engine for ``path``.
+
+    The API reads job progress while the background worker is writing scan
+    results. SQLite's default rollback journal lets those readers and writers
+    block one another; WAL keeps committed data readable throughout a job.
+    The longer busy timeout is a final guard for the short writer/writer
+    hand-offs that still have to serialize.
+    """
     database_path = path if path is not None else get_database_path()
-    return create_engine(f"sqlite:///{database_path}")
+    engine = create_engine(
+        f"sqlite:///{database_path}",
+        connect_args={"timeout": _SQLITE_BUSY_TIMEOUT_SECONDS},
+    )
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA journal_mode=WAL").scalar_one()
+    return engine
 
 
 def create_db_and_tables(engine: Engine) -> None:

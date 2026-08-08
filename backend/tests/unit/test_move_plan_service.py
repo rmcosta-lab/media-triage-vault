@@ -137,7 +137,7 @@ def test_happy_path_one_file_one_mapped_group(engine: Engine, tmp_path: Path) ->
 
         operation = _operation_for(session, scan_id, media_file.id)
         assert operation.status == "planned"
-        assert operation.planned_destination_path == absolute_nfc(dest_root / "photo.jpg")
+        assert operation.planned_destination_path == absolute_nfc(dest_root / "other" / "photo.jpg")
         assert not dest_root.exists()
 
 
@@ -150,8 +150,8 @@ def test_case_only_collision_is_blocked(engine: Engine, tmp_path: Path) -> None:
         _make_classification(session, media_file.id, "other")
 
         dest_root = tmp_path / "dest"
-        dest_root.mkdir()
-        (dest_root / "Foto.jpg").write_bytes(b"already here")
+        (dest_root / "other").mkdir(parents=True)
+        (dest_root / "other" / "Foto.jpg").write_bytes(b"already here")
         _make_rule(session, scan_id, "other", str(dest_root))
 
         generate_move_plan(session, scan_id)
@@ -243,11 +243,11 @@ def test_source_changed_since_scan_is_blocked(engine: Engine, tmp_path: Path) ->
 def test_source_equals_destination_is_blocked(engine: Engine, tmp_path: Path) -> None:
     with get_session(engine) as session:
         scan_id = _make_scan(session)
-        source = _make_source_file(tmp_path, "photo.jpg")
+        source = _make_source_file(tmp_path, "other/photo.jpg")
         media_file = _make_media_file(session, scan_id, source)
         assert media_file.id is not None
         _make_classification(session, media_file.id, "other")
-        _make_rule(session, scan_id, "other", str(source.parent))
+        _make_rule(session, scan_id, "other", str(source.parent.parent))
 
         generate_move_plan(session, scan_id)
 
@@ -309,7 +309,9 @@ def test_country_subfolder_enabled_adds_segment(engine: Engine, tmp_path: Path) 
         generate_move_plan(session, scan_id)
 
         operation = _operation_for(session, scan_id, media_file.id)
-        assert operation.planned_destination_path == absolute_nfc(dest_root / "Japan" / "photo.jpg")
+        assert operation.planned_destination_path == absolute_nfc(
+            dest_root / "iphone_photo" / "Japan" / "photo.jpg"
+        )
 
 
 def test_country_subfolder_disabled_is_flat(engine: Engine, tmp_path: Path) -> None:
@@ -327,7 +329,9 @@ def test_country_subfolder_disabled_is_flat(engine: Engine, tmp_path: Path) -> N
         generate_move_plan(session, scan_id)
 
         operation = _operation_for(session, scan_id, media_file.id)
-        assert operation.planned_destination_path == absolute_nfc(dest_root / "photo.jpg")
+        assert operation.planned_destination_path == absolute_nfc(
+            dest_root / "iphone_photo" / "photo.jpg"
+        )
 
 
 def test_unmapped_group_excluded_from_plan(engine: Engine, tmp_path: Path) -> None:
@@ -374,8 +378,8 @@ def test_generate_move_plan_never_writes_to_destination(engine: Engine, tmp_path
         _make_classification(session, media_blocked.id, "video")
 
         dest_root = tmp_path / "dest"
-        dest_root.mkdir()
-        (dest_root / "collide.jpg").write_bytes(b"pre-existing")
+        (dest_root / "video").mkdir(parents=True)
+        (dest_root / "video" / "collide.jpg").write_bytes(b"pre-existing")
         before = sorted(p.name for p in dest_root.rglob("*"))
 
         _make_rule(session, scan_id, "other", str(dest_root))

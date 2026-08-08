@@ -15,6 +15,7 @@ from backend.app.core.db import create_db_and_tables, get_engine, get_session
 from backend.app.core.tools import run_tool
 from backend.app.repositories.media_file_repository import MediaFileRepository
 from backend.app.repositories.media_metadata_repository import MediaMetadataRepository
+from backend.app.services import metadata as metadata_module
 from backend.app.services.media_type import detect_media_types_for_scan
 from backend.app.services.metadata import extract_metadata_for_scan
 from backend.app.services.scanner import scan_folder
@@ -106,3 +107,38 @@ def test_extract_metadata_for_scan_uses_single_batch_for_all_pending_files(
 
     exiftool_calls = [call for call in mocked_run_tool.call_args_list if call.args[0] == "exiftool"]
     assert len(exiftool_calls) == 1
+
+
+def test_metadata_batch_rolls_back_when_video_validation_crashes(
+    engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "source"
+    root.mkdir()
+    shutil.copy(FIXTURES_DIR / "iphone_jpeg_gps.jpg", root / "photo.jpg")
+    shutil.copy(FIXTURES_DIR / "sample_video.mp4", root / "video.mp4")
+
+    def _crash(_row: object) -> bool:
+        raise RuntimeError("ffprobe crashed")
+
+    progress: list[int] = []
+    with get_session(engine) as session:
+        scan = scan_folder(session, root, recursive=True)
+        assert scan.id is not None
+        scan_id = scan.id
+        detect_media_types_for_scan(session, scan_id)
+        monkeypatch.setattr(metadata_module, "_validate_video", _crash)
+
+        with pytest.raises(RuntimeError, match="ffprobe crashed"):
+            extract_metadata_for_scan(session, scan_id, on_progress=progress.append)
+
+    assert progress == []
+    with get_session(engine) as session:
+        media_files = MediaFileRepository(session).list_by_scan(scan_id)
+        media_file_ids = [row.id for row in media_files if row.id is not None]
+        assert MediaMetadataRepository(session).list_by_media_file_ids(media_file_ids) == []
+        for row in media_files:
+            assert row.file_type is None
+            assert row.width is None
+            assert row.height is None
+            assert row.duration_seconds is None
+            assert row.error_code is None

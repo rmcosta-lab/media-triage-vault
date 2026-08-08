@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -64,6 +65,7 @@ from backend.app.services.thumbnails import generate_thumbnail
 
 JOB_TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _SSE_POLL_INTERVAL_SECONDS = 0.3
+_JOB_SUBMISSION_LOCK = threading.Lock()
 
 router = APIRouter()
 
@@ -225,8 +227,21 @@ def create_classify_job(
     scan = ScanRepository(session).get(scan_id)
     if scan is None:
         raise HTTPException(status_code=404, detail=f"No scan found for scan_id={scan_id}")
+    if scan.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Scan must be completed before classification (status={scan.status})",
+        )
 
-    job = submit_classify_job(session, scan_id)
+    with _JOB_SUBMISSION_LOCK:
+        active_jobs = JobRepository(session).list_active_for_scan(scan_id)
+        if active_jobs:
+            active_job = active_jobs[0]
+            raise HTTPException(
+                status_code=409,
+                detail=f"Scan already has an active job_id={active_job.id}",
+            )
+        job = submit_classify_job(session, scan_id)
     return JobRead.model_validate(job)
 
 
@@ -369,7 +384,19 @@ def execute_move_plan_route(
     if move_plan.approved_at is None:
         raise HTTPException(status_code=400, detail="Plan must be approved before execution")
 
-    job = submit_execute_job(session, plan_id)
+    # FastAPI handles sync routes in a thread pool. Keep the active check and
+    # committed insert in one process-level critical section so two concurrent
+    # clicks cannot both enqueue the same local plan.
+    with _JOB_SUBMISSION_LOCK:
+        active_jobs = JobRepository(session).list_active_for_move_plan(plan_id)
+        if active_jobs:
+            active_job = active_jobs[0]
+            raise HTTPException(
+                status_code=409,
+                detail=f"Move plan already has an active execution job_id={active_job.id}",
+            )
+
+        job = submit_execute_job(session, plan_id)
     return JobRead.model_validate(job)
 
 

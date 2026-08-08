@@ -66,9 +66,7 @@ def test_destinations_and_plan_cli_end_to_end(tmp_path: Path) -> None:
 
     config_path = tmp_path / "destinations.json"
     config_path.write_text(
-        json.dumps(
-            {group: {"destination_root": str(dest_root / group)} for group in ROUTING_GROUPS}
-        ),
+        json.dumps({group: {"destination_root": str(dest_root)} for group in ROUTING_GROUPS}),
         encoding="utf-8",
     )
 
@@ -101,6 +99,9 @@ def test_destinations_and_plan_cli_end_to_end(tmp_path: Path) -> None:
         assert len(operations) == len(ALL_FIXTURES)
         assert all(op.status in MOVE_OPERATION_STATUSES for op in operations)
         assert all(op.source_path and op.planned_destination_path for op in operations)
+        assert all(
+            Path(op.planned_destination_path).parent.name in ROUTING_GROUPS for op in operations
+        )
 
     # Dry run: no destination directory or file was ever created.
     assert not dest_root.exists()

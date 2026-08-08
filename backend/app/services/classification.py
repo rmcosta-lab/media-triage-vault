@@ -39,6 +39,7 @@ from backend.app.services.country import extract_coordinates, get_default_resolv
 
 # README §6.2 — RAW image extensions.
 RAW_EXTENSIONS = frozenset({".dng", ".cr2", ".cr3", ".nef", ".arw", ".raf", ".rw2", ".orf"})
+DEFAULT_BATCH_SIZE = 200
 
 RULES: tuple[ClassificationRule, ...] = (
     VideoRule(),
@@ -104,6 +105,7 @@ def classify_scan(
     session: Session,
     scan_id: int,
     *,
+    batch_size: int = DEFAULT_BATCH_SIZE,
     on_progress: Callable[[MediaFile, ClassificationResult], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
 ) -> ClassificationSummary:
@@ -116,68 +118,93 @@ def classify_scan(
     requires_review = 0
     skipped = 0
 
-    for media in media_file_repository.list_by_scan(scan_id):
-        if should_cancel is not None and should_cancel():
-            break
-        if media.media_kind not in ("image", "video") or media.id is None:
-            skipped += 1
-            continue
+    all_rows = list(media_file_repository.list_by_scan(scan_id))
+    cancelled = False
+    for batch_start in range(0, len(all_rows), batch_size):
+        eligible_rows: list[MediaFile] = []
+        for media in all_rows[batch_start : batch_start + batch_size]:
+            if should_cancel is not None and should_cancel():
+                cancelled = True
+                break
+            if media.media_kind not in ("image", "video") or media.id is None:
+                skipped += 1
+                continue
+            eligible_rows.append(media)
 
-        media_metadata = media_metadata_repository.get_by_media_file_id(media.id)
-        metadata = _load_metadata_dict(media_metadata)
+        media_file_ids = [media.id for media in eligible_rows if media.id is not None]
+        metadata_by_file_id = {
+            item.media_file_id: item
+            for item in media_metadata_repository.list_by_media_file_ids(media_file_ids)
+        }
+        existing_by_file_id = {
+            item.media_file_id: item
+            for item in classification_repository.list_by_media_file_ids(media_file_ids)
+        }
+        classifications_to_save: list[Classification] = []
+        completed: list[tuple[MediaFile, ClassificationResult]] = []
 
-        result = _classify_one(media, metadata)
+        try:
+            for media in eligible_rows:
+                assert media.id is not None
+                media_metadata = metadata_by_file_id.get(media.id)
+                metadata = _load_metadata_dict(media_metadata)
+                result = _classify_one(media, metadata)
+                coordinates = extract_coordinates(metadata)
+                country = get_default_resolver().resolve(coordinates)
 
-        coordinates = extract_coordinates(metadata)
-        country = get_default_resolver().resolve(coordinates)
+                classification = existing_by_file_id.get(media.id)
+                if classification is None:
+                    classification = Classification(
+                        media_file_id=media.id,
+                        media_kind=result.media_kind,
+                        source_origin=result.source_origin,
+                        image_format=result.image_format,
+                        automatic_routing_group=result.routing_group,
+                        effective_routing_group=result.routing_group,
+                        confidence=result.confidence,
+                        requires_review=result.requires_review,
+                        reasons_json=json.dumps(result.reasons),
+                    )
+                else:
+                    classification.media_kind = result.media_kind
+                    classification.source_origin = result.source_origin
+                    classification.image_format = result.image_format
+                    classification.automatic_routing_group = result.routing_group
+                    classification.confidence = result.confidence
+                    classification.requires_review = result.requires_review
+                    classification.reasons_json = json.dumps(result.reasons)
+                    if classification.manual_routing_group is None:
+                        classification.effective_routing_group = result.routing_group
 
-        existing = classification_repository.get_by_media_file_id(media.id)
-        if existing is None:
-            classification = Classification(
-                media_file_id=media.id,
-                media_kind=result.media_kind,
-                source_origin=result.source_origin,
-                image_format=result.image_format,
-                automatic_routing_group=result.routing_group,
-                effective_routing_group=result.routing_group,
-                confidence=result.confidence,
-                requires_review=result.requires_review,
-                reasons_json=json.dumps(result.reasons),
-                device_make=metadata.get("Make"),
-                device_model=metadata.get("Model"),
-                captured_at=media_metadata.capture_datetime if media_metadata else None,
-                gps_latitude=coordinates.latitude if coordinates else None,
-                gps_longitude=coordinates.longitude if coordinates else None,
-                country_code=country.country_code,
-                country_name=country.country_name,
-            )
-            classification_repository.create(classification)
-        else:
-            existing.media_kind = result.media_kind
-            existing.source_origin = result.source_origin
-            existing.image_format = result.image_format
-            existing.automatic_routing_group = result.routing_group
-            existing.confidence = result.confidence
-            existing.requires_review = result.requires_review
-            existing.reasons_json = json.dumps(result.reasons)
-            existing.device_make = metadata.get("Make")
-            existing.device_model = metadata.get("Model")
-            existing.captured_at = media_metadata.capture_datetime if media_metadata else None
-            existing.gps_latitude = coordinates.latitude if coordinates else None
-            existing.gps_longitude = coordinates.longitude if coordinates else None
-            existing.country_code = country.country_code
-            existing.country_name = country.country_name
-            if existing.manual_routing_group is None:
-                existing.effective_routing_group = result.routing_group
-            classification_repository.update(existing)
+                classification.device_make = metadata.get("Make")
+                classification.device_model = metadata.get("Model")
+                classification.captured_at = (
+                    media_metadata.capture_datetime if media_metadata else None
+                )
+                classification.gps_latitude = coordinates.latitude if coordinates else None
+                classification.gps_longitude = coordinates.longitude if coordinates else None
+                classification.country_code = country.country_code
+                classification.country_name = country.country_name
+                classifications_to_save.append(classification)
+                completed.append((media, result))
 
-        routing_group_counts[result.routing_group] = (
-            routing_group_counts.get(result.routing_group, 0) + 1
-        )
-        if result.requires_review:
-            requires_review += 1
+                routing_group_counts[result.routing_group] = (
+                    routing_group_counts.get(result.routing_group, 0) + 1
+                )
+                if result.requires_review:
+                    requires_review += 1
+
+            session.add_all(classifications_to_save)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+
         if on_progress is not None:
-            on_progress(media, result)
+            for media, result in completed:
+                on_progress(media, result)
+        if cancelled:
+            break
 
     return ClassificationSummary(
         routing_group_counts=routing_group_counts,

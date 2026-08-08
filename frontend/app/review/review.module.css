@@ -21,6 +21,12 @@
   align-items: end;
 }
 
+.resultsSummary {
+  margin: 0;
+  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+  font-size: 0.9rem;
+}
+
 .filters label {
   display: flex;
   flex-direction: column;

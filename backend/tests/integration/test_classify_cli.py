@@ -16,8 +16,10 @@ from typer.testing import CliRunner
 from backend.app.cli.main import app
 from backend.app.core.db import create_db_and_tables, get_engine, get_session
 from backend.app.models.classification import Classification
+from backend.app.models.media_file import MediaFile
 from backend.app.repositories.classification_repository import ClassificationRepository
 from backend.app.repositories.media_file_repository import MediaFileRepository
+from backend.app.rules.engine import ClassificationResult
 from backend.app.services.classification import classify_scan
 from backend.app.services.media_type import detect_media_types_for_scan
 from backend.app.services.metadata import extract_metadata_for_scan
@@ -135,6 +137,29 @@ def test_classify_scan_rerun_does_not_duplicate_or_clobber_override(
         assert reclassified is not None
         assert reclassified.manual_routing_group == "other"
         assert reclassified.effective_routing_group == "other"
+
+
+def test_classify_scan_commits_before_batch_progress(engine: Engine, tmp_path: Path) -> None:
+    root = tmp_path / "source"
+    root.mkdir()
+    for index in range(5):
+        (root / f"photo-{index}.jpg").write_bytes(b"\xff\xd8\xff\xe0fake jpeg")
+
+    with get_session(engine) as session:
+        scan = scan_folder(session, root, recursive=True)
+        assert scan.id is not None
+        scan_id = scan.id
+        detect_media_types_for_scan(session, scan_id)
+
+        durable_counts: list[int] = []
+
+        def _record_durable_progress(_media: MediaFile, _result: ClassificationResult) -> None:
+            with get_session(engine) as reader:
+                durable_counts.append(len(ClassificationRepository(reader).list_by_scan(scan_id)))
+
+        classify_scan(session, scan_id, batch_size=2, on_progress=_record_durable_progress)
+
+    assert durable_counts == [2, 2, 4, 4, 5]
 
 
 def test_classify_and_override_cli_end_to_end(tmp_path: Path) -> None:

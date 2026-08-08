@@ -667,17 +667,24 @@ O usuário pode corrigir classificações.
 
 ### Etapa 4 — Definição dos destinos
 
-O usuário define uma pasta para cada grupo.
+O usuário define um diretório raiz para cada grupo. O nome do
+`routing_group` é sempre sanitizado e acrescentado automaticamente como a
+primeira subpasta do destino. Se a separação por país estiver habilitada, a
+subpasta de país vem depois do grupo:
+
+```text
+destination_root / routing_group / [country] / original_file_name
+```
 
 Exemplo:
 
 ```text
-video              -> D:\Midia\Videos
-mobile_screenshot  -> D:\Midia\Screenshots
-whatsapp_received  -> D:\Midia\WhatsApp
-iphone_raw         -> D:\Midia\iPhone\RAW
-iphone_photo       -> D:\Midia\iPhone\Fotos
-other              -> D:\Midia\Outros
+video              -> D:\Midia\video
+mobile_screenshot  -> D:\Midia\mobile_screenshot
+whatsapp_received  -> D:\Midia\whatsapp_received
+iphone_raw         -> D:\Midia\iphone_raw
+iphone_photo       -> D:\Midia\iphone_photo
+other              -> D:\Midia\other
 ```
 
 ### Etapa 5 — Plano de movimentação
@@ -703,6 +710,8 @@ A interface apresenta:
 - quantidade de arquivos;
 - volume total;
 - movimentos por grupo;
+- caminho de destino calculado para cada arquivo, incluindo diretório raiz,
+  grupo e país opcional;
 - conflitos;
 - alertas;
 - arquivos ignorados;

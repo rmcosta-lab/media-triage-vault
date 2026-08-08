@@ -20,6 +20,7 @@ from backend.app.models.media_file import MediaFile
 from backend.app.repositories.media_file_repository import MediaFileRepository
 
 HEADER_SIZE = 64
+DEFAULT_BATCH_SIZE = 200
 
 _HEIC_BRANDS: frozenset[bytes] = frozenset(
     {b"heic", b"heix", b"hevc", b"heim", b"heis", b"hevm", b"hevs", b"mif1", b"msf1"}
@@ -124,6 +125,7 @@ def detect_media_types_for_scan(
     session: Session,
     scan_id: int,
     *,
+    batch_size: int = DEFAULT_BATCH_SIZE,
     on_progress: Callable[[int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
 ) -> MediaTypeSummary:
@@ -135,22 +137,34 @@ def detect_media_types_for_scan(
 
     images = videos = unsupported = mismatches = read_errors = 0
 
-    for index, row in enumerate(pending_rows, start=1):
-        if should_cancel is not None and should_cancel():
+    processed = 0
+    cancelled = False
+    for batch_start in range(0, len(pending_rows), batch_size):
+        batch = pending_rows[batch_start : batch_start + batch_size]
+        processed_batch: list[MediaFile] = []
+        for row in batch:
+            if should_cancel is not None and should_cancel():
+                cancelled = True
+                break
+            _detect_row(row)
+            processed_batch.append(row)
+            if row.error_code == "SIGNATURE_READ_ERROR":
+                read_errors += 1
+            elif row.media_kind == "image":
+                images += 1
+            elif row.media_kind == "video":
+                videos += 1
+            else:
+                unsupported += 1
+            if row.extension_mismatch:
+                mismatches += 1
+
+        repository.save_many(processed_batch)
+        processed += len(processed_batch)
+        if on_progress is not None and processed_batch:
+            on_progress(processed)
+        if cancelled:
             break
-        _detect_and_update_row(repository, row)
-        if row.error_code == "SIGNATURE_READ_ERROR":
-            read_errors += 1
-        elif row.media_kind == "image":
-            images += 1
-        elif row.media_kind == "video":
-            videos += 1
-        else:
-            unsupported += 1
-        if row.extension_mismatch:
-            mismatches += 1
-        if on_progress is not None:
-            on_progress(index)
 
     return MediaTypeSummary(
         images=images,
@@ -161,16 +175,14 @@ def detect_media_types_for_scan(
     )
 
 
-def _detect_and_update_row(repository: MediaFileRepository, row: MediaFile) -> None:
+def _detect_row(row: MediaFile) -> None:
     try:
         detection = detect_media_type(Path(row.absolute_path), row.extension)
     except OSError as error:
         row.error_code = "SIGNATURE_READ_ERROR"
         row.error_message = str(error)
-        repository.update(row)
         return
 
     row.media_kind = detection.media_kind
     row.mime_type = detection.mime_type
     row.extension_mismatch = detection.extension_mismatch
-    repository.update(row)

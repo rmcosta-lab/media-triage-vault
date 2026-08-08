@@ -80,8 +80,7 @@ def scan_folder(
     buffer: list[MediaFile] = []
 
     def flush() -> None:
-        for media_file in buffer:
-            media_file_repository.create(media_file)
+        media_file_repository.save_many(buffer)
         buffer.clear()
         if on_progress is not None:
             on_progress(
@@ -100,12 +99,13 @@ def scan_folder(
             if should_cancel is not None and should_cancel():
                 cancelled = True
                 break
-    if not cancelled:
+    if not cancelled and buffer:
         flush()
 
     scan.status = "cancelled" if cancelled else "completed"
     scan.finished_at = datetime.now(UTC)
     scan.total_files = processed_files
+    scan.processed_files = processed_files
     scan.total_bytes = total_bytes
     return scan_repository.update(scan)
 

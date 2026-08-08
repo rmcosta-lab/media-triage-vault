@@ -23,6 +23,7 @@ import uvicorn
 
 from backend.app.cli.scan_report import write_error_log, write_inventory_json
 from backend.app.core.db import create_db_and_tables, get_database_path, get_engine, get_session
+from backend.app.core.tools import ToolNotAvailableError, require_tools
 from backend.app.repositories.classification_repository import ClassificationRepository
 from backend.app.repositories.media_file_repository import MediaFileRepository
 from backend.app.repositories.move_operation_repository import MoveOperationRepository
@@ -77,6 +78,12 @@ def scan_command(
     ),
 ) -> None:
     """Scan PATH, detect media types, extract metadata, and export the inventory."""
+    try:
+        require_tools("exiftool", "ffprobe")
+    except ToolNotAvailableError as error:
+        typer.echo(f"Required local tool unavailable: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
     output.mkdir(parents=True, exist_ok=True)
     database_path = database if database is not None else get_database_path()
     engine = get_engine(database_path)

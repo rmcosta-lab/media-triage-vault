@@ -75,6 +75,7 @@ def test_scan_folder_persists_expected_files_and_skips_ignored(
     assert rows["top.jpg"].size_bytes == len(b"top")
     assert scan.status == "completed"
     assert scan.total_files == 3
+    assert scan.processed_files == 3
     assert scan.total_bytes == len(b"top") + len(b"inner12") + len(b"nfd")
 
 
@@ -172,8 +173,7 @@ def test_scan_folder_invokes_progress_callback(engine: Engine, tmp_path: Path) -
             on_progress=progress_events.append,
         )
 
-    assert len(progress_events) >= 2
-    assert progress_events[-1].processed_files == 5
+    assert [event.processed_files for event in progress_events] == [2, 4, 5]
 
 
 def test_scan_folder_honors_should_cancel_between_batches(engine: Engine, tmp_path: Path) -> None:
