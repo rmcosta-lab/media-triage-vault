@@ -97,6 +97,36 @@ Explicitly **not** in scope before the MVP closes: macOS CI runners, macOS fixtu
 - **pre-commit** — hooks for the above
 - **Playwright** — E2E once the frontend exists
 
-## Future AI phase (not MVP)
+## Local AI (Stage H, post-MVP)
 
-Target hardware: RTX 4090 (24 GB VRAM). PyTorch + CUDA first; TensorRT for RTX after profiling. Embeddings: SigLIP 2 So400m or Qwen3-VL-Embedding-2B, stored in local FAISS. VLM enrichment: Qwen3-VL-2B for bulk, Qwen3-VL-8B (4-bit) selectively. No GPU dependency in the metadata MVP.
+- **Installation:** PyTorch, Transformers, Accelerate, and their model-runtime
+  dependencies live in the optional `ai` project extra. The base application,
+  metadata pipeline, and normal test suite never require PyTorch or a GPU.
+- **Model supply:** model weights are user-supplied directories outside the
+  repository. The application never downloads or resolves a remote model ID:
+  every Transformers load uses a local path plus `local_files_only=True`, with
+  Hugging Face/Transformers offline environment flags set before the libraries
+  are imported.
+- **Bulk image model:** `google/siglip2-so400m-patch14-384` for zero-shot theme
+  scoring and optional embeddings. Scores are relative similarities until a
+  Phase 26 calibration profile turns score/margin bands into accept/ambiguous/
+  review decisions.
+- **Selective VLM:** `Qwen/Qwen3-VL-4B-Instruct`, restricted to validated JSON
+  over the run's taxonomy. It runs automatically only for ambiguous CUDA cases;
+  CPU use requires an explicit command and a latency warning.
+- **Licensing/revisions:** the selected [SigLIP 2](https://huggingface.co/google/siglip2-so400m-patch14-384)
+  and [Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct)
+  model cards declare Apache-2.0. Phase 23 records the exact local snapshot
+  revision/fingerprint and rechecks its license before the runtime is accepted.
+- **Hardware:** CPU and NVIDIA CUDA are supported. `auto` prefers CUDA when
+  available; conservative device-specific batch defaults may be overridden.
+  Models are unloaded between cascade stages. The primary validation target is
+  Windows 11 with an RTX 4090, plus a forced-CPU real-model pass.
+- **Persistence:** themes and audit fields remain in SQLite. Embeddings are
+  optional (enabled by default), stored under `runtime/embeddings/`, and keyed
+  by content/model/preprocessor fingerprints; FAISS is not part of Stage H.
+- **Optimization:** PyTorch is the only Stage H inference backend. Throughput,
+  RAM, and VRAM are measured, but TensorRT is a later horizon item gated on the
+  profile showing a worthwhile bottleneck.
+- **Explicit exclusions:** Stage H does not include semantic search, FAISS,
+  Florence-2/OCR/captions, video inference, or face clustering/recognition.
